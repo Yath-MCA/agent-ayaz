@@ -1,32 +1,22 @@
 import asyncio
 import logging
-import os
-import subprocess
-import shutil
-import socket
-from pathlib import Path
 from typing import Optional
 
-import httpx
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 import uvicorn
+
+from config.settings import get_settings
+from project_utils import get_project_path
+from services.execution_service import execute_command
+from services.ollama_service import call_ollama as ollama_call
+from services.telegram_service import TelegramService
 
 # ─────────────────────────────────────────────
 # Load Environment
 # ─────────────────────────────────────────────
-load_dotenv()
-
-PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", "D:/PERSONAL/LIVE_PROJECTS"))
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3")
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY")
-ALLOWED_TELEGRAM_USER_ID = int(os.getenv("ALLOWED_TELEGRAM_USER_ID", "0"))
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8000))
+settings = get_settings()
 
 # ─────────────────────────────────────────────
 # Logging
@@ -40,9 +30,9 @@ log = logging.getLogger(__name__)
 app = FastAPI(title="AI DevOps Agent")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-Api-Key", "Content-Type", "Authorization"],
 )
 
 # ─────────────────────────────────────────────
@@ -60,44 +50,14 @@ class AgentResponse(BaseModel):
 # Ollama Call
 # ─────────────────────────────────────────────
 async def call_ollama(prompt: str) -> str:
-    payload = {
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-    }
-    async with httpx.AsyncClient(timeout=120) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/generate", json=payload)
-        r.raise_for_status()
-        return r.json().get("response", "")
+    return await ollama_call(prompt, settings.ollama_model, settings.ollama_url)
 
-# ─────────────────────────────────────────────
-# Secure Shell Execution
-# ─────────────────────────────────────────────
-FORBIDDEN_COMMANDS = [
-    "format",
-    "shutdown",
-    "restart",
-    "rm ",
-    "del ",
-    "rd ",
-]
 
-def execute_command(cmd: str, cwd: Optional[str] = None) -> str:
-    if any(bad in cmd.lower() for bad in FORBIDDEN_COMMANDS):
-        return "❌ Forbidden command detected."
-
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=cwd
-        )
-        output = result.stdout or result.stderr or "(no output)"
-        return output[:3000]
-    except Exception as e:
-        return f"Execution error: {e}"
+def validate_api_key(x_api_key: Optional[str]) -> None:
+    if not settings.api_secret_key:
+        raise HTTPException(500, "Server API secret is not configured")
+    if not x_api_key or x_api_key != settings.api_secret_key:
+        raise HTTPException(401, "Unauthorized")
 
 # ─────────────────────────────────────────────
 # Agent Core
@@ -120,7 +80,7 @@ async def run_agent(prompt: str, execute: bool):
 # ─────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"status": "running", "model": OLLAMA_MODEL}
+    return {"status": "running", "model": settings.ollama_model}
 
 @app.post("/chat", response_model=AgentResponse)
 async def chat(body: PromptRequest):
@@ -128,8 +88,7 @@ async def chat(body: PromptRequest):
 
 @app.post("/run-task", response_model=AgentResponse)
 async def run_task(body: PromptRequest, x_api_key: str = Header(None)):
-    if x_api_key != API_SECRET_KEY:
-        raise HTTPException(401, "Unauthorized")
+    validate_api_key(x_api_key)
     return await run_agent(body.prompt, execute=body.execute_commands)
 
 # ─────────────────────────────────────────────
@@ -137,42 +96,26 @@ async def run_task(body: PromptRequest, x_api_key: str = Header(None)):
 # ─────────────────────────────────────────────
 @app.post("/run-project")
 async def run_project(project: str, command: str, x_api_key: str = Header(None)):
-    if x_api_key != API_SECRET_KEY:
-        raise HTTPException(401, "Unauthorized")
+    validate_api_key(x_api_key)
 
-    project_path = PROJECT_ROOT / project
-
-    if not project_path.exists():
+    project_path = get_project_path(project)
+    if not project_path:
         raise HTTPException(400, "Project not found")
 
     output = execute_command(command, cwd=str(project_path))
     return {"project": project, "output": output}
 
-# ─────────────────────────────────────────────
-# Telegram
-# ─────────────────────────────────────────────
-def is_allowed(update):
-    return update.effective_user.id == ALLOWED_TELEGRAM_USER_ID
-
-async def tg_message(update, ctx):
-    if not is_allowed(update):
-        return
-
-    text = update.message.text
-    result = await run_agent(text, execute=False)
-
-    reply = result.reply[:4000]
-    await update.message.reply_text(reply)
-
 def build_telegram():
-    from telegram.ext import Application, MessageHandler, CommandHandler, filters
+    async def handle_message_text(text: str) -> str:
+        result = await run_agent(text, execute=False)
+        return result.reply
 
-    if not TELEGRAM_TOKEN:
-        return None
-
-    app_tg = Application.builder().token(TELEGRAM_TOKEN).build()
-    app_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tg_message))
-    return app_tg
+    service = TelegramService(
+        token=settings.telegram_token,
+        allowed_user_id=settings.allowed_telegram_user_id,
+        message_handler=handle_message_text,
+    )
+    return service.build_application()
 
 # ─────────────────────────────────────────────
 # Startup
@@ -180,16 +123,26 @@ def build_telegram():
 async def main():
     tg = build_telegram()
 
-    config = uvicorn.Config(app, host=HOST, port=PORT)
+    config = uvicorn.Config(app, host=settings.host, port=settings.port)
     server = uvicorn.Server(config)
 
+    telegram_started = False
     if tg:
-        await tg.initialize()
-        await tg.start()
-        await tg.updater.start_polling()
-        await server.serve()
-    else:
-        await server.serve()
+        try:
+            await tg.initialize()
+            await tg.start()
+            await tg.updater.start_polling()
+            telegram_started = True
+            log.info("Telegram bot connected")
+        except Exception as error:
+            log.exception(f"Telegram startup failed, continuing with REST API only: {error}")
+
+    await server.serve()
+
+    if tg and telegram_started:
+        await tg.updater.stop()
+        await tg.stop()
+        await tg.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())

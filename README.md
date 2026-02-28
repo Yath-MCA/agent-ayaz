@@ -1,103 +1,220 @@
-# 🤖 AI Agent — Windows + Ollama + Telegram + REST API
+# 🤖 AI DevOps Agent
 
-Run AI tasks from your **phone via Telegram** or **HTTP requests**, powered by **local Ollama LLM** on Windows.
+Comprehensive Documentation\
+FastAPI + Telegram + Local Ollama (phi3) + GitHub Copilot Integration
 
----
+------------------------------------------------------------------------
 
-## 📁 Files
+## 📌 Overview
 
-```
-ai-agent/
-├── main.py           ← Main server (auto-detects Ollama path)
-├── requirements.txt  ← Python packages
-├── .env              ← Your config (tokens, model, port)
-├── start.bat         ← Double-click to launch on Windows
-└── README.md
-```
+AI DevOps Agent is a secure remote automation controller designed for
+Windows environments.
 
----
+It enables:
 
-## 🚀 Setup (Windows)
+-   Remote project command execution
+-   Telegram-based DevOps control
+-   Local AI fallback using Ollama (phi3)
+-   Secure REST API access
+-   Seamless integration with GitHub Copilot (IDE-based)
 
-### Step 1 — Install Ollama
-Download and run the official installer:
-👉 https://ollama.com/download/windows
+This system does NOT replace IDE AI tools.\
+It acts as an orchestration and automation layer.
 
-Default install path: `C:\Users\YOU\AppData\Local\Programs\Ollama\`
+------------------------------------------------------------------------
 
-### Step 2 — Pull a Model
-Open **Command Prompt** and run:
-```cmd
-ollama pull llama3.2
-```
+## 🧠 System Architecture
 
-### Step 3 — Install Python
-👉 https://python.org/downloads  
-✅ Check "Add Python to PATH" during install
+VS Code + GitHub Copilot\
+↓\
+Local Development
 
-### Step 4 — Install Dependencies
-```cmd
-pip install -r requirements.txt
-```
+Telegram (Remote Control)\
+↓\
+FastAPI AI-Agent\
+↓\
+• Secure Project Execution\
+• Local Ollama (phi3 fallback)\
+• Task Orchestration
 
-### Step 5 — Get Telegram Bot Token
-1. Open Telegram → search **@BotFather**
-2. Send `/newbot` → follow steps
-3. Copy the token
+------------------------------------------------------------------------
 
-### Step 6 — Edit `.env`
-```env
-OLLAMA_MODEL=llama3.2
-TELEGRAM_TOKEN=123456789:ABCdef...your-token
-API_SECRET_KEY=change-this-secret
-```
+## 📂 Folder Structure
 
-### Step 7 — Run!
-Double-click `start.bat` OR:
-```cmd
-python main.py
-```
+ai-agent/ │ ├── main.py \# Core FastAPI + Telegram + Execution Logic ├──
+project_utils.py \# Project root helper utilities ├── requirements.txt
+\# Python dependencies ├── .env \# Environment configuration (DO NOT
+COMMIT) ├── logs/ \# Optional runtime logs ├── prompts/ \# Optional
+reusable AI prompts └── README.md \# Documentation
 
----
+------------------------------------------------------------------------
 
-## 📱 Using from Phone
+## 📁 PROJECT_ROOT Structure Example
 
-### Telegram — just message your bot!
+D:`\PERSONAL`{=tex}`\LIVE`{=tex}\_PROJECTS │ ├── ai-agent ├── oneconnect
+├── client-portal ├── erp-system └── test-project
 
-### REST API
-Find your PC IP: `ipconfig` → look for IPv4 Address
+All execution is restricted to:
 
-```
-POST http://192.168.1.100:8000/chat
-Content-Type: application/json
-{"prompt": "Write a Python hello world"}
-```
+PROJECT_ROOT/`<project>`{=html}
 
-Protected endpoint:
-```
-POST http://192.168.1.100:8000/run-task
-X-Api-Key: your-secret-key
-{"prompt": "...", "execute_commands": false}
-```
+------------------------------------------------------------------------
 
-API Docs on browser: `http://192.168.1.100:8000/docs`
+## 🚀 Installation Guide (Windows)
 
----
+### 1️⃣ Install Ollama
 
-## 🌍 Access Outside Home WiFi
+Download: https://ollama.com/download/windows
 
-```cmd
-cloudflared-windows-amd64.exe tunnel --url http://localhost:8000
-```
-Download cloudflared from: https://github.com/cloudflare/cloudflare/releases/latest
+Pull recommended model:
 
----
+    ollama pull phi3
 
-## 🛠️ Troubleshooting
+Verify:
 
-| Problem | Fix |
-|---------|-----|
-| ollama.exe not found | Set `OLLAMA_BIN=C:\Users\YOU\AppData\Local\Programs\Ollama\ollama.exe` in `.env` |
-| No models | Run `ollama pull llama3.2` in CMD |
-| Port blocked | Allow Python in Windows Firewall |
-| Slow responses | Use `phi3` model (smaller/faster) |
+    ollama list
+
+------------------------------------------------------------------------
+
+### 2️⃣ Install Python Dependencies
+
+    pip install -r requirements.txt
+
+------------------------------------------------------------------------
+
+### 3️⃣ Configure Environment (.env)
+
+PROJECT_ROOT=D:`\PERSONAL`{=tex}`\LIVE`{=tex}\_PROJECTS
+OLLAMA_MODEL=phi3 OLLAMA_URL=http://localhost:11434
+TELEGRAM_TOKEN=your_bot_token API_SECRET_KEY=your_super_secret_key
+ALLOWED_TELEGRAM_USER_ID=your_telegram_user_id HOST=0.0.0.0 PORT=8000
+
+------------------------------------------------------------------------
+
+### 4️⃣ Run the Agent
+
+    python main.py
+
+Access API:
+
+    http://localhost:8000
+
+------------------------------------------------------------------------
+
+## 📱 Telegram Usage
+
+Send any prompt to your bot:
+
+    Generate Playwright test for login page
+
+Agent will use local phi3 model.
+
+------------------------------------------------------------------------
+
+## 🔐 REST API Endpoints
+
+### Public Chat
+
+POST /chat
+
+No command execution allowed.
+
+------------------------------------------------------------------------
+
+### Protected Task Execution
+
+POST /run-task\
+Header: X-Api-Key
+
+Allows optional command execution.
+
+------------------------------------------------------------------------
+
+### Run Command in Specific Project
+
+POST /run-project\
+Header: X-Api-Key
+
+Parameters: - project - command
+
+------------------------------------------------------------------------
+
+## 🛡 Security Model
+
+-   API key required for protected endpoints
+-   Telegram restricted to allowed user ID
+-   Forbidden shell commands blocked
+-   No public raw shell endpoint
+-   No hardcoded credentials
+-   No debug mode enabled
+
+------------------------------------------------------------------------
+
+## 🧠 AI Model Recommendation
+
+Use:
+
+    phi3
+
+Why:
+
+-   Fast
+-   Lightweight
+-   Good reasoning for automation
+-   Low resource usage
+
+------------------------------------------------------------------------
+
+## 🌍 Optional: Cloudflare Tunnel
+
+Expose externally:
+
+    cloudflared tunnel --url http://localhost:8000
+
+Telegram works without tunnel.
+
+------------------------------------------------------------------------
+
+## 🧪 Typical Use Cases
+
+-   Run builds remotely
+-   Execute test suites
+-   Generate automation scripts
+-   Debug project modules
+-   Run deployment scripts
+-   Generate Playwright tests
+
+------------------------------------------------------------------------
+
+## ⚙ Production Readiness Checklist
+
+-   Strong API_SECRET_KEY
+-   Correct PROJECT_ROOT path
+-   Telegram restricted
+-   Ollama running
+-   No secrets committed
+-   Firewall configured properly
+
+------------------------------------------------------------------------
+
+## 📈 Future Improvements
+
+-   Command whitelist system
+-   Execution logs persistence
+-   Background job runner
+-   Task history tracking
+-   Docker deployment
+-   CI/CD integration
+
+------------------------------------------------------------------------
+
+## 📌 Final Notes
+
+This AI DevOps Agent:
+
+-   Enhances development workflows
+-   Provides secure automation
+-   Works alongside GitHub Copilot
+-   Enables remote DevOps control
+
+It is designed for controlled environments and personal/team usage.
