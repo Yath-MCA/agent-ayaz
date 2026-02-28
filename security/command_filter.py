@@ -1,3 +1,6 @@
+from typing import Iterable
+
+
 FORBIDDEN_COMMANDS = [
     "format",
     "shutdown",
@@ -9,7 +12,7 @@ FORBIDDEN_COMMANDS = [
 
 FORBIDDEN_PATTERNS = ["&&", "||", "|", ";", "`", "$(", ">", "<"]
 
-ALLOWED_COMMAND_PREFIXES = {
+DEFAULT_ALLOWED_COMMAND_PREFIXES = {
     "python",
     "pip",
     "pytest",
@@ -35,7 +38,12 @@ ALLOWED_COMMAND_PREFIXES = {
 }
 
 
-def validate_command_policy(cmd: str) -> str | None:
+def validate_command_policy(
+    cmd: str,
+    *,
+    strict_mode: bool = False,
+    allowed_prefixes: Iterable[str] | None = None,
+) -> str | None:
     cmd_clean = cmd.strip()
     if not cmd_clean:
         return "❌ Empty command is not allowed."
@@ -49,7 +57,13 @@ def validate_command_policy(cmd: str) -> str | None:
         return "❌ Chained or redirected commands are not allowed."
 
     first_token = cmd_clean.split()[0].lower()
-    if first_token not in ALLOWED_COMMAND_PREFIXES:
+
+    if strict_mode:
+        allow_set = {prefix.lower() for prefix in (allowed_prefixes or []) if prefix}
+    else:
+        allow_set = DEFAULT_ALLOWED_COMMAND_PREFIXES
+
+    if first_token not in allow_set:
         return f"❌ Command prefix '{first_token}' is not allowed."
 
     return None
