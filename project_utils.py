@@ -34,6 +34,12 @@ def get_run_task_dir(project_path: Path) -> Path:
     return project_path / "run-task"
 
 
+def ensure_run_task_dir(project_path: Path) -> Path:
+    task_dir = get_run_task_dir(project_path)
+    task_dir.mkdir(exist_ok=True)
+    return task_dir
+
+
 def list_run_tasks(project_path: Path) -> list[str]:
     task_dir = get_run_task_dir(project_path)
     if not task_dir.exists() or not task_dir.is_dir():

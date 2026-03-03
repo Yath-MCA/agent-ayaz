@@ -9,14 +9,28 @@ from typing import Optional
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import uvicorn
 
 from config.settings import get_settings
-from project_utils import get_project_path, get_run_task_catalog, get_task_file, list_projects
+from project_utils import get_project_path, get_run_task_catalog, get_task_file, list_projects, ensure_run_task_dir
 from services.execution_service import execute_command_result, execute_task_file_result
+from services.memory_service import init_db, record_execution, get_project_history, get_recent_failures, get_execution_stats, suggest_retry
+from services.task_queue_service import queue_status, run_queue, promote_later_to_queue, ensure_dirs as ensure_queue_dirs
 from services.ollama_service import call_ollama as ollama_call, stream_ollama
 from services.telegram_service import TelegramService
+from agents import planner as planner_agent, validator as validator_agent, executor as executor_agent
+from agents.auditor import record as auditor_record, tail as auditor_tail
+from agents.approval import ApprovalStore, ApprovalStatus
+from agents.risk import score_plan
+from agents.mode import mode_info, current_mode, AgentMode, should_auto_approve, can_execute_custom_command
+from agents.optimizer import build_optimized_prompt
+from agents.replay import replay_execution
+from agents.nodes import node_registry
+from plugins import plugin_manager
+from security.rbac import get_role, require_role
 
 # ─────────────────────────────────────────────
 # Load Environment
@@ -39,12 +53,21 @@ app.state.telegram_configured = bool(settings.telegram_token)
 app.state.telegram_started = False
 app.state.selected_projects = {}
 app.state.rate_limit_hits = {}
+app.state.approval_store = ApprovalStore(default_timeout_seconds=300)
+init_db()
+ensure_queue_dirs()
+plugin_manager.load_plugins_from_dir(Path("plugins"))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_methods=["GET", "POST"],
     allow_headers=["X-Api-Key", "Content-Type", "Authorization"],
 )
+
+# Serve React dashboard at /dashboard (static files)
+_dashboard_dir = Path("dashboard")
+if _dashboard_dir.exists():
+    app.mount("/dashboard", StaticFiles(directory=str(_dashboard_dir), html=True), name="dashboard")
 
 # ─────────────────────────────────────────────
 # Models
@@ -69,6 +92,11 @@ class ProjectTaskRequest(BaseModel):
     dry_run: bool = False
     auto_approve: Optional[bool] = None
     delay_seconds: Optional[int] = Field(default=None, ge=0)
+
+
+class ProjectRunAllTasksRequest(BaseModel):
+    project: Optional[str] = Field(default=None, examples=["my-project"])
+    dry_run: bool = False
 
 
 class ProjectCustomCommandRequest(BaseModel):
@@ -146,6 +174,9 @@ def require_protected_access(request: Request, x_api_key: Optional[str], endpoin
     api_key = validate_api_key(x_api_key)
     client_host = request.client.host if request.client else "unknown"
     enforce_rate_limit(f"{api_key}:{client_host}:{endpoint}")
+    rbac_error = require_role(api_key, endpoint)
+    if rbac_error:
+        fail(403, "FORBIDDEN", rbac_error, "Check RBAC_ROLES configuration")
     return api_key
 
 
@@ -164,25 +195,81 @@ def resolve_project_context(project_name: Optional[str], api_key: str) -> tuple[
 # ─────────────────────────────────────────────
 # Agent Core
 # ─────────────────────────────────────────────
-async def run_agent(prompt: str, execute: bool):
-    reply = await call_ollama(prompt)
-    cmd_output = None
+async def run_agent(prompt: str, execute: bool, user: str = "api"):
+    mode = current_mode()
 
-    if execute and "RUN_CMD:" in reply:
-        for line in reply.splitlines():
-            if line.startswith("RUN_CMD:"):
-                cmd = line.replace("RUN_CMD:", "").strip()
-                execution = execute_command_result(
-                    cmd,
+    # Phase 9: optimizer injects memory context into prompt
+    enriched_prompt = build_optimized_prompt(prompt, project=None)
+
+    # Phase 11: before_plan hook
+    plugin_manager.fire("before_plan", prompt=prompt, project=None)
+
+    # Planner → structured JSON plan
+    exec_plan = await planner_agent.plan(enriched_prompt, call_ollama)
+
+    # Phase 7: risk scoring
+    risk = score_plan(exec_plan.command, exec_plan.project, exec_plan.type, exec_plan.auto_approve)
+
+    cmd_output = None
+    if execute and exec_plan.type == "command" and exec_plan.command:
+        # Phase 10: SAFE mode blocks custom commands
+        if not can_execute_custom_command(mode):
+            return AgentResponse(reply=exec_plan.raw_reply, command_output="⛔ SAFE_MODE: custom commands are not allowed.")
+
+        # Phase 10: AUTONOMOUS mode can auto-approve low-risk plans
+        auto = should_auto_approve(risk.score, mode)
+
+        # Validator gate
+        validation = validator_agent.validate(
+            exec_plan,
+            strict_mode=settings.strict_command_mode,
+            allowed_prefixes=settings.allowed_command_prefixes,
+        )
+        plugin_manager.fire("after_validation", plan=exec_plan, result=validation)
+
+        if validation.approved:
+            plugin_manager.fire("before_execution", plan=exec_plan)
+            attempt = 0
+            from agents.mode import should_auto_retry
+            while True:
+                execution = executor_agent.execute(
+                    exec_plan, validation,
                     timeout_seconds=settings.command_timeout_seconds,
                     max_output_chars=settings.max_output_chars,
                     strict_mode=settings.strict_command_mode,
                     allowed_prefixes=settings.allowed_command_prefixes,
                 )
+                plugin_manager.fire("after_execution", plan=exec_plan, result=execution)
+                cmd_output = execution.output
+                if not should_auto_retry(execution.exit_code, attempt, mode):
+                    break
+                attempt += 1
+
+            auditor_record(user=user, project=exec_plan.project, command=exec_plan.command,
+                           task=exec_plan.task, exit_code=execution.exit_code,
+                           duration_ms=execution.duration_ms, approved=True,
+                           plan_type=exec_plan.type, reasoning=exec_plan.reasoning)
+            record_execution(user=user, project=exec_plan.project, task=exec_plan.task,
+                             command=exec_plan.command, plan_type=exec_plan.type,
+                             exit_code=execution.exit_code, duration_ms=execution.duration_ms, approved=True)
+        else:
+            cmd_output = f"⛔ Blocked: {validation.reason}"
+            auditor_record(user=user, project=exec_plan.project, command=exec_plan.command,
+                           task=exec_plan.task, exit_code=2, duration_ms=0, approved=False,
+                           plan_type=exec_plan.type, reasoning=validation.reason)
+    elif execute and "RUN_CMD:" in exec_plan.raw_reply:
+        for line in exec_plan.raw_reply.splitlines():
+            if line.startswith("RUN_CMD:"):
+                cmd = line.replace("RUN_CMD:", "").strip()
+                execution = execute_command_result(cmd,
+                    timeout_seconds=settings.command_timeout_seconds,
+                    max_output_chars=settings.max_output_chars,
+                    strict_mode=settings.strict_command_mode,
+                    allowed_prefixes=settings.allowed_command_prefixes)
                 cmd_output = execution.output
                 break
 
-    return AgentResponse(reply=reply, command_output=cmd_output)
+    return AgentResponse(reply=exec_plan.raw_reply, command_output=cmd_output)
 
 # ─────────────────────────────────────────────
 # REST Endpoints
@@ -316,6 +403,7 @@ async def select_project(body: ProjectSelectRequest, request: Request, x_api_key
         fail(400, "PROJECT_NOT_FOUND", "Project not found", "Call /projects and choose a valid project name")
 
     _, open_message = try_open_in_vscode(str(project_path))
+    ensure_run_task_dir(project_path)
     tasks = get_run_task_catalog(project_path)
     app.state.selected_projects[api_key] = body.project
 
@@ -434,7 +522,66 @@ async def run_project_task(body: ProjectTaskRequest, request: Request, x_api_key
     }
 
 
-@app.post("/project/run-custom")
+@app.post("/project/run-all-tasks")
+async def run_all_project_tasks(body: ProjectRunAllTasksRequest, request: Request, x_api_key: str = Header(None)):
+    api_key = require_protected_access(request, x_api_key, "/project/run-all-tasks")
+
+    selected_name, project_path = resolve_project_context(body.project, api_key)
+
+    tasks = get_run_task_catalog(project_path)
+    if not tasks:
+        return {"project": selected_name, "results": [], "count": 0, "message": "No tasks found in run-task folder."}
+
+    if body.dry_run:
+        return {
+            "project": selected_name,
+            "dry_run": True,
+            "tasks": [item["name"] for item in tasks],
+            "count": len(tasks),
+            "message": "Dry-run only. Tasks would execute in this order.",
+        }
+
+    results = []
+    for item in tasks:
+        task_file = get_task_file(project_path, item["name"])
+        if not task_file:
+            results.append({"task": item["name"], "skipped": True, "reason": "file_not_found"})
+            continue
+
+        auto_approve = bool(item.get("auto_approve", settings.auto_approve_default))
+        if not auto_approve:
+            results.append({"task": item["name"], "skipped": True, "reason": "approval_required"})
+            continue
+
+        delay_seconds = int(item.get("delay_seconds", settings.default_execution_delay_seconds))
+        if delay_seconds > 0:
+            await asyncio.sleep(delay_seconds)
+
+        execution = execute_task_file_result(
+            task_file,
+            cwd=str(project_path),
+            timeout_seconds=settings.task_timeout_seconds,
+            max_output_chars=settings.max_output_chars,
+        )
+        audit_log({
+            "kind": "run-all-tasks",
+            "api_key": api_key[-4:],
+            "project": selected_name,
+            "task": item["name"],
+            "exit_code": execution.exit_code,
+            "duration_ms": execution.duration_ms,
+        })
+        results.append({
+            "task": item["name"],
+            "output": execution.output,
+            "exit_code": execution.exit_code,
+            "started_at": execution.started_at,
+            "duration_ms": execution.duration_ms,
+        })
+
+    return {"project": selected_name, "results": results, "count": len(results)}
+
+
 async def run_project_custom(body: ProjectCustomCommandRequest, request: Request, x_api_key: str = Header(None)):
     api_key = require_protected_access(request, x_api_key, "/project/run-custom")
 
@@ -486,6 +633,292 @@ async def run_project_custom(body: ProjectCustomCommandRequest, request: Request
         "auto_approve": auto_approve,
         "delay_seconds": delay_seconds,
     }
+
+# ─────────────────────────────────────────────
+# Monitoring & Memory Endpoints (Phase 5)
+# ─────────────────────────────────────────────
+@app.get("/monitor/health")
+async def monitor_health(request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/health")
+    ollama_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{settings.ollama_url}/api/tags")
+            ollama_ok = r.status_code == 200
+    except Exception:
+        pass
+    pending = app.state.approval_store.pending()
+    return {
+        "status": "ok" if ollama_ok else "degraded",
+        "ollama_running": ollama_ok,
+        "telegram_started": app.state.telegram_started,
+        "pending_approvals": len(pending),
+    }
+
+
+@app.get("/monitor/logs")
+async def monitor_logs(request: Request, limit: int = 50, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/logs")
+    return {"entries": auditor_tail(limit)}
+
+
+@app.get("/monitor/history")
+async def monitor_history(request: Request, project: Optional[str] = None, x_api_key: str = Header(None)):
+    api_key = require_protected_access(request, x_api_key, "/monitor/history")
+    selected_name, project_path = resolve_project_context(project, api_key)
+    return {
+        "project": selected_name,
+        "history": get_project_history(selected_name),
+        "stats": get_execution_stats(selected_name),
+        "retry_suggestion": suggest_retry(selected_name),
+    }
+
+
+@app.get("/monitor/approvals")
+async def monitor_approvals(request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/approvals")
+    return {"pending": [r.to_dict() for r in app.state.approval_store.pending()]}
+
+
+@app.post("/monitor/approve/{token}")
+async def approve_task(token: str, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/approve")
+    req = app.state.approval_store.resolve(token, approved=True)
+    if not req:
+        fail(404, "NOT_FOUND", "Approval token not found", "")
+    return {"token": token, "status": req.status.value}
+
+
+@app.post("/monitor/reject/{token}")
+async def reject_task(token: str, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/reject")
+    req = app.state.approval_store.resolve(token, approved=False)
+    if not req:
+        fail(404, "NOT_FOUND", "Approval token not found", "")
+    return {"token": token, "status": req.status.value}
+
+
+# ─────────────────────────────────────────────
+# Phase 6 — SSE Streaming, Stats, Self-check, Timeline
+# ─────────────────────────────────────────────
+@app.get("/monitor/stream/logs")
+async def stream_logs(request: Request, x_api_key: str = Header(None)):
+    """Server-Sent Events: streams new audit log entries as they arrive."""
+    require_protected_access(request, x_api_key, "/monitor/stream/logs")
+
+    async def event_generator():
+        seen = 0
+        while True:
+            if await request.is_disconnected():
+                break
+            entries = auditor_tail(200)
+            new_entries = entries[seen:]
+            for entry in new_entries:
+                data = json.dumps(entry, ensure_ascii=False)
+                yield f"data: {data}\n\n"
+            seen = len(entries)
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/monitor/stats")
+async def monitor_stats(request: Request, x_api_key: str = Header(None)):
+    """Enhanced execution metrics across all projects."""
+    require_protected_access(request, x_api_key, "/monitor/stats")
+    from services.memory_service import _connect
+    with _connect() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM executions").fetchone()[0]
+        failures = conn.execute("SELECT COUNT(*) FROM executions WHERE exit_code != 0").fetchone()[0]
+        avg_duration = conn.execute("SELECT AVG(duration_ms) FROM executions").fetchone()[0]
+        most_project = conn.execute(
+            "SELECT project, COUNT(*) as c FROM executions WHERE project IS NOT NULL GROUP BY project ORDER BY c DESC LIMIT 1"
+        ).fetchone()
+        most_task = conn.execute(
+            "SELECT task, COUNT(*) as c FROM executions WHERE task IS NOT NULL GROUP BY task ORDER BY c DESC LIMIT 1"
+        ).fetchone()
+
+    return {
+        "total_executions": total,
+        "total_failures": failures,
+        "failure_rate": round(failures / total * 100, 1) if total else 0,
+        "success_rate": round((total - failures) / total * 100, 1) if total else 0,
+        "average_execution_ms": round(avg_duration or 0, 1),
+        "most_used_project": most_project[0] if most_project else None,
+        "most_used_task": most_task[0] if most_task else None,
+    }
+
+
+@app.get("/monitor/self-check")
+async def self_check(request: Request, x_api_key: str = Header(None)):
+    """Validate all subsystems: Ollama, DB, approval store, DSL."""
+    require_protected_access(request, x_api_key, "/monitor/self-check")
+    results = {}
+
+    # Ollama
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{settings.ollama_url}/api/tags")
+            results["ollama"] = "ok" if r.status_code == 200 else "unreachable"
+    except Exception:
+        results["ollama"] = "unreachable"
+
+    # DB write/read
+    try:
+        from services.memory_service import record_execution, get_execution_stats
+        record_execution(user="self-check", project=None, task="self-check", command=None,
+                         plan_type="chat", exit_code=0, duration_ms=0, approved=True)
+        stats = get_execution_stats()
+        results["database"] = "ok" if stats["total"] >= 0 else "error"
+    except Exception as e:
+        results["database"] = f"error: {e}"
+
+    # Approval store
+    try:
+        store = app.state.approval_store
+        results["approval_store"] = f"ok ({len(store.list_all())} total)"
+    except Exception as e:
+        results["approval_store"] = f"error: {e}"
+
+    # DSL validation
+    try:
+        from agents.task_dsl import TaskDefinition, validate_task_definition
+        test_def = TaskDefinition(task="test", type="command", command="echo ok",
+                                  task_file=None, timeout=10, auto_approve=True,
+                                  delay_seconds=0, description="")
+        err = validate_task_definition(test_def)
+        results["dsl_validation"] = "ok" if err is None else f"error: {err}"
+    except Exception as e:
+        results["dsl_validation"] = f"error: {e}"
+
+    results["overall"] = "ok" if all(v == "ok" or str(v).startswith("ok") for v in results.values()) else "degraded"
+    return results
+
+
+@app.get("/monitor/timeline")
+async def monitor_timeline(request: Request, limit: int = 50, x_api_key: str = Header(None)):
+    """Chronological execution activity feed."""
+    require_protected_access(request, x_api_key, "/monitor/timeline")
+    from services.memory_service import _connect
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT ts, user, project, task, command, plan_type, exit_code, duration_ms FROM executions ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return {"timeline": [dict(r) for r in rows], "count": len(rows)}
+
+
+@app.get("/queue/status")
+async def get_queue_status(request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/queue/status")
+    status = queue_status()
+    if status["queue_empty"] and status["later_available"]:
+        status["admin_prompt"] = "Queue is empty but 'later' tasks are available. POST /queue/promote-later to move them into queue, then POST /queue/run."
+    return status
+
+
+@app.post("/queue/run")
+async def api_run_queue(request: Request, x_api_key: str = Header(None)):
+    api_key = require_protected_access(request, x_api_key, "/queue/run")
+    results = run_queue(
+        timeout_seconds=settings.command_timeout_seconds,
+        task_timeout_seconds=settings.task_timeout_seconds,
+        max_output_chars=settings.max_output_chars,
+        strict_mode=settings.strict_command_mode,
+        allowed_prefixes=settings.allowed_command_prefixes,
+    )
+    for r in results:
+        audit_log({"kind": "queue-run", "api_key": api_key[-4:], "task": r.name, "status": r.status, "exit_code": r.exit_code})
+
+    status = queue_status()
+    response = {
+        "processed": len(results),
+        "results": [{"task": r.name, "status": r.status, "exit_code": r.exit_code, "duration_ms": r.duration_ms, "output": r.output} for r in results],
+    }
+    if status["queue_empty"] and status["later_available"]:
+        response["admin_prompt"] = "Queue is now empty. 'later' tasks are available — POST /queue/promote-later to schedule them."
+    return response
+
+
+@app.post("/queue/promote-later")
+async def api_promote_later(request: Request, x_api_key: str = Header(None)):
+    api_key = require_protected_access(request, x_api_key, "/queue/promote-later")
+    moved = promote_later_to_queue()
+    if not moved:
+        return {"moved": [], "message": "No tasks in 'later' folder."}
+    audit_log({"kind": "promote-later", "api_key": api_key[-4:], "moved": moved})
+    return {
+        "moved": moved,
+        "count": len(moved),
+        "message": f"Moved {len(moved)} task(s) from later/ to queue/. POST /queue/run to process.",
+    }
+
+
+# ─────────────────────────────────────────────
+# Phase 7–14 Endpoints
+# ─────────────────────────────────────────────
+@app.get("/monitor/mode")
+async def get_mode(request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/mode")
+    return mode_info()
+
+
+@app.get("/monitor/risk")
+async def get_risk(command: str, project: Optional[str] = None, request: Request = None, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/risk")
+    risk = score_plan(command, project, "command", auto_approve=True)
+    return risk.to_dict()
+
+
+@app.get("/monitor/replay/{execution_id}")
+async def replay(execution_id: int, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/replay")
+    return replay_execution(
+        execution_id,
+        strict_mode=settings.strict_command_mode,
+        allowed_prefixes=settings.allowed_command_prefixes,
+        timeout_seconds=settings.command_timeout_seconds,
+        max_output_chars=settings.max_output_chars,
+    )
+
+
+@app.get("/monitor/nodes")
+async def get_nodes(request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/nodes")
+    return {"nodes": [n.to_dict() for n in node_registry.all_nodes()], "alive": len(node_registry.alive_nodes())}
+
+
+@app.post("/monitor/nodes/register")
+async def register_node(node_id: str, host: str, port: int, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/nodes/register")
+    node = node_registry.register(node_id, host, port)
+    return node.to_dict()
+
+
+@app.post("/monitor/nodes/{node_id}/heartbeat")
+async def node_heartbeat(node_id: str, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/monitor/nodes")
+    ok = node_registry.heartbeat(node_id)
+    return {"node_id": node_id, "updated": ok}
+
+
+@app.get("/monitor/heatmap")
+async def heatmap(request: Request, x_api_key: str = Header(None)):
+    """Execution frequency by project and hour for visualization."""
+    require_protected_access(request, x_api_key, "/monitor/heatmap")
+    from services.memory_service import _connect
+    with _connect() as conn:
+        rows = conn.execute("""
+            SELECT project,
+                   strftime('%H', datetime(ts, 'unixepoch')) as hour,
+                   COUNT(*) as count
+            FROM executions
+            WHERE project IS NOT NULL
+            GROUP BY project, hour
+            ORDER BY project, hour
+        """).fetchall()
+    return {"heatmap": [dict(r) for r in rows]}
+
 
 def build_telegram():
     selected_project: dict[str, Optional[str]] = {"name": None, "path": None}
@@ -634,6 +1067,108 @@ def build_telegram():
             f"PROJECT_ROOT: {settings.project_root}"
         )
 
+    async def handle_run_all_tasks() -> str:
+        if not selected_project.get("path"):
+            return "ℹ️ No project selected. Use /projects then /project <name>."
+
+        project_name = selected_project["name"]
+        project_path = get_project_path(project_name or "")
+        if not project_path:
+            selected_project["name"] = None
+            selected_project["path"] = None
+            return "❌ Selected project is no longer available. Choose again with /project <name>."
+
+        tasks = get_run_task_catalog(project_path)
+        if not tasks:
+            return "ℹ️ No tasks found in run-task folder."
+
+        lines = []
+        for item in tasks:
+            task_file = get_task_file(project_path, item["name"])
+            if not task_file:
+                lines.append(f"⏭ {item['name']}: skipped (file not found)")
+                continue
+
+            auto_approve = bool(item.get("auto_approve", settings.auto_approve_default))
+            if not auto_approve:
+                lines.append(f"⏭ {item['name']}: skipped (approval required)")
+                continue
+
+            delay = int(item.get("delay_seconds", settings.default_execution_delay_seconds))
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+            execution = execute_task_file_result(
+                task_file,
+                cwd=str(project_path),
+                timeout_seconds=settings.task_timeout_seconds,
+                max_output_chars=500,
+            )
+            status = "✅" if execution.exit_code == 0 else "❌"
+            lines.append(f"{status} {item['name']} (exit={execution.exit_code}, {execution.duration_ms}ms)")
+
+        return "\n".join(lines) if lines else "No tasks executed."
+
+    def handle_approve(token: str) -> str:
+        req = app.state.approval_store.resolve(token, approved=True)
+        if not req:
+            return f"❌ Token '{token}' not found."
+        return f"✅ Approved: {req.plan.task} (token={token})"
+
+    def handle_reject(token: str) -> str:
+        req = app.state.approval_store.resolve(token, approved=False)
+        if not req:
+            return f"❌ Token '{token}' not found."
+        return f"🚫 Rejected: {req.plan.task} (token={token})"
+
+    def handle_queue_status() -> str:
+        status = queue_status()
+        lines = [
+            f"📋 Queue ({len(status['queue'])} tasks): " + (", ".join(status['queue']) or "empty"),
+            f"⏳ Later ({len(status['later'])} tasks): " + (", ".join(status['later']) or "none"),
+            f"✅ Completed: {len(status['completed'])} tasks",
+        ]
+        if status["queue_empty"] and status["later_available"]:
+            lines.append("\n⚠️ Queue is empty but 'later' tasks exist. Use /qlater to promote them.")
+        return "\n".join(lines)
+
+    async def handle_queue_run() -> str:
+        status = queue_status()
+        if status["queue_empty"]:
+            msg = "ℹ️ Queue is empty."
+            if status["later_available"]:
+                msg += " 'later' tasks are available — use /qlater to promote them into the queue."
+            return msg
+
+        results = run_queue(
+            timeout_seconds=settings.command_timeout_seconds,
+            task_timeout_seconds=settings.task_timeout_seconds,
+            max_output_chars=500,
+            strict_mode=settings.strict_command_mode,
+            allowed_prefixes=settings.allowed_command_prefixes,
+        )
+
+        lines = [f"▶ Processed {len(results)} task(s):"]
+        for r in results:
+            icon = "✅" if r.status in ("executed", "planned") else "❌" if r.status == "failed" else "⏭"
+            lines.append(f"{icon} {r.name} — {r.status} (exit={r.exit_code}, {r.duration_ms}ms)")
+
+        after = queue_status()
+        if after["queue_empty"] and after["later_available"]:
+            lines.append("\n⚠️ Queue now empty. 'later' tasks are available — use /qlater to schedule them.")
+
+        return "\n".join(lines)
+
+    def handle_promote_later() -> str:
+        moved = promote_later_to_queue()
+        if not moved:
+            return "ℹ️ No tasks in 'later' folder."
+        return (
+            f"✅ Moved {len(moved)} task(s) from later/ → queue/:\n"
+            + "\n".join(f"  • {name}" for name in moved)
+            + "\n\nUse /qrun to process them."
+        )
+
     service = TelegramService(
         token=settings.telegram_token,
         allowed_user_id=settings.allowed_telegram_user_id,
@@ -645,6 +1180,12 @@ def build_telegram():
         tasks_handler=handle_tasks,
         run_task_handler=handle_run_task,
         run_custom_handler=handle_run_custom,
+        run_all_tasks_handler=handle_run_all_tasks,
+        approve_handler=handle_approve,
+        reject_handler=handle_reject,
+        queue_status_handler=handle_queue_status,
+        queue_run_handler=handle_queue_run,
+        promote_later_handler=handle_promote_later,
     )
     return service.build_application()
 

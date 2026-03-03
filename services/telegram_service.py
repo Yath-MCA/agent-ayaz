@@ -17,6 +17,12 @@ class TelegramService:
         tasks_handler: Callable[[], str],
         run_task_handler: Callable[[str], str],
         run_custom_handler: Callable[[str], str],
+        run_all_tasks_handler: Callable[[], Awaitable[str]],
+        approve_handler: Callable[[str], str],
+        reject_handler: Callable[[str], str],
+        queue_status_handler: Callable[[], str],
+        queue_run_handler: Callable[[], Awaitable[str]],
+        promote_later_handler: Callable[[], str],
     ) -> None:
         self.token = token
         self.allowed_user_id = allowed_user_id
@@ -28,6 +34,12 @@ class TelegramService:
         self.tasks_handler = tasks_handler
         self.run_task_handler = run_task_handler
         self.run_custom_handler = run_custom_handler
+        self.run_all_tasks_handler = run_all_tasks_handler
+        self.approve_handler = approve_handler
+        self.reject_handler = reject_handler
+        self.queue_status_handler = queue_status_handler
+        self.queue_run_handler = queue_run_handler
+        self.promote_later_handler = promote_later_handler
 
     def is_allowed(self, update) -> bool:
         return (
@@ -62,6 +74,12 @@ class TelegramService:
             "/current - show currently selected project\n"
             "/tasks - list available files in selected project run-task folder\n"
             "/task <file_name> - run selected run-task file\n"
+            "/runtasks - run all tasks in run-task folder in order\n"
+            "/qstatus - show queue/later/completed task status\n"
+            "/qrun - process all tasks in queue/ in order\n"
+            "/qlater - promote later/ tasks into queue/ (when queue is empty)\n"
+            "/approve <token> - approve a pending task execution\n"
+            "/reject <token> - reject a pending task execution\n"
             "/custom <command> - run custom command in selected project\n"
             "/id - show your Telegram user ID"
         )
@@ -122,6 +140,48 @@ class TelegramService:
         response = self.run_custom_handler(command)
         await update.message.reply_text(response[:4000])
 
+    async def cmd_runtasks(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        response = await self.run_all_tasks_handler()
+        await update.message.reply_text(response[:4000])
+
+    async def cmd_approve(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /approve <token>")
+            return
+        token = context.args[0].strip()
+        response = self.approve_handler(token)
+        await update.message.reply_text(response[:4000])
+
+    async def cmd_reject(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /reject <token>")
+            return
+        token = context.args[0].strip()
+        response = self.reject_handler(token)
+        await update.message.reply_text(response[:4000])
+
+    async def cmd_qstatus(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        await update.message.reply_text(self.queue_status_handler()[:4000])
+
+    async def cmd_qrun(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        response = await self.queue_run_handler()
+        await update.message.reply_text(response[:4000])
+
+    async def cmd_qlater(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        await update.message.reply_text(self.promote_later_handler()[:4000])
+
     async def cmd_id(self, update, context) -> None:
         user = update.effective_user
         if update.message and user:
@@ -153,6 +213,12 @@ class TelegramService:
         app.add_handler(CommandHandler("current", self.cmd_current))
         app.add_handler(CommandHandler("tasks", self.cmd_tasks))
         app.add_handler(CommandHandler("task", self.cmd_task))
+        app.add_handler(CommandHandler("runtasks", self.cmd_runtasks))
+        app.add_handler(CommandHandler("approve", self.cmd_approve))
+        app.add_handler(CommandHandler("reject", self.cmd_reject))
+        app.add_handler(CommandHandler("qstatus", self.cmd_qstatus))
+        app.add_handler(CommandHandler("qrun", self.cmd_qrun))
+        app.add_handler(CommandHandler("qlater", self.cmd_qlater))
         app.add_handler(CommandHandler("custom", self.cmd_custom))
         app.add_handler(CommandHandler("id", self.cmd_id))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
