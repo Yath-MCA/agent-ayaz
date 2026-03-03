@@ -9,13 +9,99 @@ AyazGitDy automatically:
 - Supports Jira ticket prefixes
 - Adds developer remarks
 - Protects `main`/`master` branches
-- Works in CLI mode or via Telegram
+- Works in **CLI mode**, **GUI mode**, or **via Telegram**
 
 ---
 
 ## 🚀 Quick Start
 
-### CLI Mode (Standalone)
+### 🖥️ **GUI Mode** (Easiest — Recommended for Windows)
+
+**Option 1: Double-click launcher**
+```
+Double-click: ayazgitdy_gui.bat
+```
+
+**Option 2: Run directly**
+```bash
+python tools/ayazgitdy_gui.py
+```
+
+**Features:**
+- ✅ Visual interface with buttons and text fields
+- ✅ Real-time status updates
+- ✅ Live changes preview
+- ✅ Generated commit message preview
+- ✅ One-click commit & push
+- ✅ No command-line needed!
+
+**Screenshot Preview:**
+```
+┌─────────────────────────────────────────────────────────┐
+│ 🚀 AyazGitDy - Intelligent Git Commit Automation       │
+├─────────────────────────────────────────────────────────┤
+│ Repository: [C:\projects\my-app   ] [Browse] [Refresh] │
+│ Branch: main | Files Changed: 4 | Type: feat           │
+├─────────────────────────────────────────────────────────┤
+│ Jira: [PROJ-456  ] Remark: [Fixed auth bug          ]  │
+│ ☐ Commit only (do not push)                            │
+├─────────────────────────────────────────────────────────┤
+│ Changes Preview:                                        │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ Modified: 2                                         │ │
+│ │ Added: 2                                            │ │
+│ │ auth/service.py | 45 ++++++++++++++++++                │
+│ │ middleware/auth.py | 23 ++++++++++++                 │
+│ └─────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────┤
+│ Commit Message:                                         │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ PROJ-456: feat: Add 2 file(s), Update 2 file(s)    │ │
+│ │                                                     │ │
+│ │ Modified:                                           │ │
+│ │   - auth/service.py                                 │ │
+│ │ Dev Remark: Fixed auth bug                          │ │
+│ └─────────────────────────────────────────────────────┘ │
+├─────────────────────────────────────────────────────────┤
+│ [🔄 Refresh] [📝 Generate Message] [✅ Commit & Push]  │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 📋 **CLI Mode** (Interactive Terminal)
+
+**Option 1: Via Windows wrapper**
+```bash
+ayazgitdy.bat
+```
+
+**Option 2: Direct Python**
+```bash
+python tools/ayazgitdy.py
+```
+
+**With arguments:**
+```bash
+# Specify repository
+ayazgitdy.bat --path C:\projects\my-app
+
+# With Jira ticket
+ayazgitdy.bat --jira PROJ-456
+
+# With developer remark
+ayazgitdy.bat --remark "Fixed edge case in validation"
+
+# Commit only (no push)
+ayazgitdy.bat --no-push
+
+# Combined
+ayazgitdy.bat --jira ABC-123 --remark "Optimize query" --no-push
+```
+
+---
+
+### Via ayazdy CLI Wrapper
 
 ```bash
 # Interactive mode (current directory)
