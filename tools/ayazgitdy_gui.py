@@ -14,7 +14,7 @@ Or double-click the .py file on Windows.
 import sys
 import threading
 from pathlib import Path
-from tkinter import *
+import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from typing import Optional
 
@@ -35,13 +35,13 @@ class AyazGitDyGUI:
         
         # State
         self.git_service: Optional[GitService] = None
-        self.repo_path = StringVar(value=str(Path.cwd()))
-        self.jira_ticket = StringVar()
-        self.dev_remark = StringVar()
-        self.no_push = BooleanVar(value=False)
-        self.detected_type = StringVar(value="—")
-        self.current_branch = StringVar(value="—")
-        self.files_changed = StringVar(value="0")
+        self.repo_path = tk.StringVar(value=str(Path.cwd()))
+        self.jira_ticket = tk.StringVar()
+        self.dev_remark = tk.StringVar()
+        self.no_push = tk.BooleanVar(value=False)
+        self.detected_type = tk.StringVar(value="—")
+        self.current_branch = tk.StringVar(value="—")
+        self.files_changed = tk.StringVar(value="0")
         
         self.setup_ui()
         self.refresh_status()
@@ -53,7 +53,7 @@ class AyazGitDyGUI:
         self.root.grid_columnconfigure(0, weight=1)
         
         # Title
-        title = Label(
+        title = tk.Label(
             self.root, 
             text="🚀 AyazGitDy - Intelligent Git Commit Automation",
             font=("Segoe UI", 14, "bold"),
@@ -64,70 +64,71 @@ class AyazGitDyGUI:
         title.grid(row=0, column=0, sticky="ew")
         
         # Repository Path Section
-        repo_frame = LabelFrame(self.root, text="Repository", padding=10)
+        repo_frame = ttk.LabelFrame(self.root, text="Repository", padding=10)
         repo_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
         repo_frame.grid_columnconfigure(1, weight=1)
         
-        Label(repo_frame, text="Path:").grid(row=0, column=0, sticky="w", padx=5)
-        Entry(repo_frame, textvariable=self.repo_path, width=50).grid(row=0, column=1, sticky="ew", padx=5)
-        Button(repo_frame, text="Browse...", command=self.browse_repo, width=10).grid(row=0, column=2, padx=5)
-        Button(repo_frame, text="Refresh", command=self.refresh_status, width=10).grid(row=0, column=3, padx=5)
+        ttk.Label(repo_frame, text="Path:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Entry(repo_frame, textvariable=self.repo_path, width=50).grid(row=0, column=1, sticky="ew", padx=5)
+        ttk.Button(repo_frame, text="Browse...", command=self.browse_repo, width=10).grid(row=0, column=2, padx=5)
+        ttk.Button(repo_frame, text="Refresh", command=self.refresh_status, width=10).grid(row=0, column=3, padx=5)
         
         # Status Section
-        status_frame = LabelFrame(self.root, text="Repository Status", padding=10)
+        status_frame = ttk.LabelFrame(self.root, text="Repository Status", padding=10)
         status_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
         status_frame.grid_columnconfigure(1, weight=1)
         status_frame.grid_columnconfigure(3, weight=1)
         
-        Label(status_frame, text="Branch:").grid(row=0, column=0, sticky="w", padx=5)
-        Label(status_frame, textvariable=self.current_branch, fg="#3498db", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(status_frame, text="Branch:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Label(status_frame, textvariable=self.current_branch, foreground="#3498db", font=("Segoe UI", 9, "bold")).grid(row=0, column=1, sticky="w", padx=5)
         
-        Label(status_frame, text="Files Changed:").grid(row=0, column=2, sticky="w", padx=5)
-        Label(status_frame, textvariable=self.files_changed, fg="#e74c3c", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=5)
+        ttk.Label(status_frame, text="Files Changed:").grid(row=0, column=2, sticky="w", padx=5)
+        ttk.Label(status_frame, textvariable=self.files_changed, foreground="#e74c3c", font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="w", padx=5)
         
-        Label(status_frame, text="Detected Type:").grid(row=1, column=0, sticky="w", padx=5)
-        Label(status_frame, textvariable=self.detected_type, fg="#27ae60", font=("Segoe UI", 9, "bold")).grid(row=1, column=1, sticky="w", padx=5)
+        ttk.Label(status_frame, text="Detected Type:").grid(row=1, column=0, sticky="w", padx=5)
+        ttk.Label(status_frame, textvariable=self.detected_type, foreground="#27ae60", font=("Segoe UI", 9, "bold")).grid(row=1, column=1, sticky="w", padx=5)
         
         # Commit Options Section
-        options_frame = LabelFrame(self.root, text="Commit Options", padding=10)
+        options_frame = ttk.LabelFrame(self.root, text="Commit Options", padding=10)
         options_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
         options_frame.grid_columnconfigure(1, weight=1)
         
-        Label(options_frame, text="Jira Ticket:").grid(row=0, column=0, sticky="w", padx=5)
-        Entry(options_frame, textvariable=self.jira_ticket, width=20).grid(row=0, column=1, sticky="w", padx=5)
-        Label(options_frame, text="(e.g., PROJ-456)", fg="gray", font=("Segoe UI", 8)).grid(row=0, column=2, sticky="w", padx=5)
+        ttk.Label(options_frame, text="Jira Ticket:").grid(row=0, column=0, sticky="w", padx=5)
+        ttk.Entry(options_frame, textvariable=self.jira_ticket, width=20).grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Label(options_frame, text="(e.g., PROJ-456)", foreground="gray", font=("Segoe UI", 8)).grid(row=0, column=2, sticky="w", padx=5)
         
-        Label(options_frame, text="Dev Remark:").grid(row=1, column=0, sticky="w", padx=5)
-        Entry(options_frame, textvariable=self.dev_remark, width=60).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5)
+        ttk.Label(options_frame, text="Dev Remark:").grid(row=1, column=0, sticky="w", padx=5)
+        ttk.Entry(options_frame, textvariable=self.dev_remark, width=60).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5)
         
-        Checkbutton(options_frame, text="Commit only (do not push)", variable=self.no_push).grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        ttk.Checkbutton(options_frame, text="Commit only (do not push)", variable=self.no_push).grid(row=2, column=1, sticky="w", padx=5, pady=5)
         
         # Changes Preview Section
-        preview_frame = LabelFrame(self.root, text="Changes Preview", padding=10)
+        preview_frame = ttk.LabelFrame(self.root, text="Changes Preview", padding=10)
         preview_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
         preview_frame.grid_columnconfigure(0, weight=1)
         
-        self.changes_text = scrolledtext.ScrolledText(preview_frame, height=8, wrap=WORD, bg="#f8f9fa", font=("Consolas", 9))
+        self.changes_text = scrolledtext.ScrolledText(preview_frame, height=8, wrap=tk.WORD, bg="#f8f9fa", font=("Consolas", 9))
         self.changes_text.grid(row=0, column=0, sticky="nsew", pady=5)
         preview_frame.grid_rowconfigure(0, weight=1)
         
         # Commit Message Preview Section
-        message_frame = LabelFrame(self.root, text="Generated Commit Message", padding=10)
+        message_frame = ttk.LabelFrame(self.root, text="Generated Commit Message", padding=10)
         message_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=5)
         message_frame.grid_columnconfigure(0, weight=1)
         
-        self.message_text = scrolledtext.ScrolledText(message_frame, height=8, wrap=WORD, bg="#ecf0f1", font=("Consolas", 9))
+        self.message_text = scrolledtext.ScrolledText(message_frame, height=8, wrap=tk.WORD, bg="#ecf0f1", font=("Consolas", 9))
         self.message_text.grid(row=0, column=0, sticky="nsew", pady=5)
         message_frame.grid_rowconfigure(0, weight=1)
         
         # Action Buttons
-        button_frame = Frame(self.root, padding=10)
+        button_frame = ttk.Frame(self.root, padding=10)
         button_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=10)
         button_frame.grid_columnconfigure(0, weight=1)
         button_frame.grid_columnconfigure(1, weight=1)
         button_frame.grid_columnconfigure(2, weight=1)
         
-        Button(
+        # Use tk.Button for colored buttons (ttk buttons don't support bg/fg easily)
+        tk.Button(
             button_frame, 
             text="🔄 Refresh Status", 
             command=self.refresh_status,
@@ -137,7 +138,7 @@ class AyazGitDyGUI:
             height=2
         ).grid(row=0, column=0, sticky="ew", padx=5)
         
-        Button(
+        tk.Button(
             button_frame, 
             text="📝 Generate Message", 
             command=self.generate_message,
@@ -147,7 +148,7 @@ class AyazGitDyGUI:
             height=2
         ).grid(row=0, column=1, sticky="ew", padx=5)
         
-        Button(
+        tk.Button(
             button_frame, 
             text="✅ Commit & Push", 
             command=self.commit_and_push,
@@ -158,12 +159,12 @@ class AyazGitDyGUI:
         ).grid(row=0, column=2, sticky="ew", padx=5)
         
         # Status Bar
-        self.status_bar = Label(
+        self.status_bar = tk.Label(
             self.root, 
             text="Ready", 
             bd=1, 
-            relief=SUNKEN, 
-            anchor=W,
+            relief=tk.SUNKEN, 
+            anchor=tk.W,
             bg="#34495e",
             fg="white",
             font=("Segoe UI", 9)
@@ -229,12 +230,12 @@ class AyazGitDyGUI:
     
     def _set_changes_preview(self, text: str):
         """Set changes preview text."""
-        self.changes_text.delete(1.0, END)
+        self.changes_text.delete(1.0, tk.END)
         self.changes_text.insert(1.0, text)
     
     def _set_message_preview(self, text: str):
         """Set message preview text."""
-        self.message_text.delete(1.0, END)
+        self.message_text.delete(1.0, tk.END)
         self.message_text.insert(1.0, text)
     
     def generate_message(self):
@@ -291,7 +292,7 @@ class AyazGitDyGUI:
             return
         
         # Get message from preview
-        message = self.message_text.get(1.0, END).strip()
+        message = self.message_text.get(1.0, tk.END).strip()
         if not message:
             self._show_error("Generate commit message first (click 'Generate Message').")
             return
@@ -362,7 +363,7 @@ class AyazGitDyGUI:
 
 def main():
     """Main GUI entrypoint."""
-    root = Tk()
+    root = tk.Tk()
     
     # Set icon if available (optional)
     try:
