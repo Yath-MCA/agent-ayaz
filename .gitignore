@@ -155,7 +155,14 @@ temp_*.py
 
 # Build artifacts
 dist/
+dist-exe/
 AyazGitDy-Portable*/
+build-exe/
+*.spec.bak
+
+# PyInstaller
+*.manifest
+*.spec~
 
 # Spyder project settings
 .spyderproject
