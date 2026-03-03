@@ -137,6 +137,7 @@ celerybeat.pid
 # Environments
 .env
 .env.*
+!.env.example
 env
 .envrc
 .venv
@@ -145,6 +146,16 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Project-specific
+logs/
+temp/
+temp_*.bat
+temp_*.py
+
+# Build artifacts
+dist/
+AyazGitDy-Portable*/
 
 # Spyder project settings
 .spyderproject

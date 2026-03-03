@@ -1,0 +1,29 @@
+# AyazGitDy - Docker Compose for Dev Team
+# Simplified testing with Docker
+
+version: '3.8'
+
+services:
+  ayazdy:
+    build: .
+    container_name: ayazdy-agent
+    ports:
+      - "8000:8000"
+    environment:
+      - PROJECT_ROOT=/app/projects
+      - HOST=0.0.0.0
+      - PORT=8000
+      - OLLAMA_URL=http://host.docker.internal:11434
+    env_file:
+      - .env
+    volumes:
+      - ./projects:/app/projects
+      - ./logs:/app/logs
+      - ./agent-task:/app/agent-task
+    restart: unless-stopped
+    networks:
+      - ayazdy-network
+
+networks:
+  ayazdy-network:
+    driver: bridge

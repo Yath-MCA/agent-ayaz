@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# Build
+dist/
+build/
+*.egg
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+temp/
+*.tmp
+temp_*.bat
+
+# Agent task queue (will be mounted as volume)
+agent-task/
+
+# Node modules (if any)
+node_modules/
+
+# Documentation (not needed in container)
+*.md
+!README.md
+
+# BAT files (Windows-specific, not needed in container)
+*.bat
