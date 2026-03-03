@@ -20,6 +20,7 @@ from services.execution_service import execute_command_result, execute_task_file
 from services.memory_service import init_db, record_execution, get_project_history, get_recent_failures, get_execution_stats, suggest_retry
 from services.task_queue_service import queue_status, run_queue, promote_later_to_queue, ensure_dirs as ensure_queue_dirs
 from services.ollama_service import call_ollama as ollama_call, stream_ollama
+from services.llm_provider import get_llm_service, LLMProvider
 from services.telegram_service import TelegramService
 from agents import planner as planner_agent, validator as validator_agent, executor as executor_agent
 from agents.auditor import record as auditor_record, tail as auditor_tail
@@ -54,6 +55,7 @@ app.state.telegram_started = False
 app.state.selected_projects = {}
 app.state.rate_limit_hits = {}
 app.state.approval_store = ApprovalStore(default_timeout_seconds=300)
+app.state.llm_service = get_llm_service()  # Initialize LLM provider service
 init_db()
 ensure_queue_dirs()
 plugin_manager.load_plugins_from_dir(Path("plugins"))
@@ -107,10 +109,15 @@ class ProjectCustomCommandRequest(BaseModel):
     delay_seconds: Optional[int] = Field(default=None, ge=0)
 
 # ─────────────────────────────────────────────
-# Ollama Call
+# LLM Call with Auto-Fallback
 # ─────────────────────────────────────────────
 async def call_ollama(prompt: str) -> str:
-    return await ollama_call(prompt, settings.ollama_model, settings.ollama_url)
+    """
+    Call LLM with automatic provider fallback.
+    Tries: Ollama > OpenAI > OpenRouter > LM Studio > Mock
+    """
+    llm_service = get_llm_service()
+    return await llm_service.call_llm(prompt)
 
 
 def fail(status_code: int, code: str, message: str, hint: str = "") -> None:
@@ -281,8 +288,12 @@ async def root():
 
 @app.get("/status")
 async def status():
+    llm_service = get_llm_service()
+    current_provider = await llm_service.get_available_provider()
+    
     return {
         "status": "running",
+        "llm_provider": current_provider,
         "model": settings.ollama_model,
         "telegram_configured": app.state.telegram_configured,
         "telegram_started": app.state.telegram_started,
@@ -293,21 +304,27 @@ async def status():
 
 @app.get("/health")
 async def health():
-    ollama_ok = False
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.get(f"{settings.ollama_url}/api/tags")
-            ollama_ok = response.status_code == 200
-    except Exception:
-        ollama_ok = False
-
+    llm_service = get_llm_service()
+    llm_status = await llm_service.get_status()
+    
+    # Check if any provider is available
+    any_available = any(
+        provider_info["available"] 
+        for provider_info in llm_status["providers"].values()
+    )
+    
     return {
-        "status": "ok" if ollama_ok else "degraded",
-        "ollama_url": settings.ollama_url,
-        "ollama_running": ollama_ok,
+        "status": "ok" if any_available else "degraded",
+        "llm_providers": llm_status,
         "telegram_configured": app.state.telegram_configured,
         "telegram_started": app.state.telegram_started,
     }
+
+@app.get("/llm-providers")
+async def llm_providers():
+    """Get detailed status of all LLM providers."""
+    llm_service = get_llm_service()
+    return await llm_service.get_status()
 
 @app.post("/chat", response_model=AgentResponse)
 async def chat(body: PromptRequest):
@@ -317,6 +334,8 @@ async def chat(body: PromptRequest):
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
+    llm_service = get_llm_service()
+    
     try:
         while True:
             prompt = (await websocket.receive_text()).strip()
@@ -324,7 +343,7 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_text("❌ Empty prompt")
                 continue
 
-            async for chunk in stream_ollama(prompt, settings.ollama_model, settings.ollama_url):
+            async for chunk in llm_service.stream_llm(prompt):
                 await websocket.send_text(chunk)
 
             await websocket.send_text("[DONE]")

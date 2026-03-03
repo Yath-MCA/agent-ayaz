@@ -49,7 +49,8 @@ agent-ayazdy/
 │   ├── mode.py                  # SAFE/CONTROLLED/AUTONOMOUS modes
 │   └── nodes.py                 # Distributed node registry
 ├── services/
-│   ├── ollama_service.py        # Ollama HTTP integration
+│   ├── llm_provider.py          # 🤖 Multi-provider LLM with auto-fallback
+│   ├── ollama_service.py        # Ollama HTTP integration (legacy)
 │   ├── telegram_service.py      # Telegram bot (15+ commands)
 │   ├── execution_service.py     # Command execution wrapper
 │   ├── memory_service.py        # SQLite execution history (logs/memory.db)
@@ -65,12 +66,18 @@ agent-ayazdy/
 │   ├── index.html               # CDN-based React app (zero build)
 │   ├── js/app.js                # Dashboard UI (~350 lines)
 │   └── README.md                # Dashboard setup guide
+├── tools/                       # 🔧 Utility tools
+│   ├── git_service.py           # Git automation service
+│   ├── ayazgitdy.py             # Standalone Git commit CLI
+│   ├── ayazgitdy_gui.py         # Tkinter GUI for Git automation
+│   └── check_llm.py             # LLM provider diagnostic tool
 ├── agent-task/                  # 📋 Task queue folders
 │   ├── queue/                   # Tasks to process
-│   ├── completed/               # Completed tasks (01-07 phase specs)
+│   ├── completed/               # Completed tasks (01-08 phase specs)
 │   └── later/                   # Future tasks
 ├── project_utils.py             # PROJECT_ROOT utilities
 ├── ayazdy.bat                   # Windows OS-level wrapper
+├── check_llm.bat                # LLM diagnostic wrapper
 ├── requirements.txt             # Python dependencies
 └── README.md
 ```
@@ -79,7 +86,11 @@ agent-ayazdy/
 
 ## 🚀 Setup (Windows)
 
-### 1) Install Ollama
+### 1) Choose Your LLM Provider
+
+The system supports **multiple LLM providers** with automatic fallback:
+
+#### Option A: Ollama (Recommended - Free, Local, Private)
 
 Download: <https://ollama.com/download/windows>
 
@@ -87,6 +98,40 @@ Download: <https://ollama.com/download/windows>
 ollama pull phi3
 ollama list
 ```
+
+#### Option B: OpenAI (Cloud, Paid)
+
+Get API key: <https://platform.openai.com/api-keys>
+
+Add to `.env`:
+```env
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+```
+
+#### Option C: OpenRouter (Cloud, Free/Paid Models)
+
+Get API key: <https://openrouter.ai/keys>
+
+Add to `.env`:
+```env
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free
+```
+
+#### Option D: LM Studio (Local Alternative)
+
+Download: <https://lmstudio.ai>
+
+Start server on port 1234, then add to `.env`:
+```env
+LM_STUDIO_URL=http://localhost:1234/v1
+LM_STUDIO_MODEL=local-model
+```
+
+**Auto-Fallback:** System tries providers in order: Ollama → OpenAI → OpenRouter → LM Studio → Mock
+
+**Diagnostic Tool:** Run `check_llm.bat` to check which providers are available.
 
 ### 2) Install dependencies
 
@@ -101,9 +146,21 @@ Copy `.env.example` to `.env` and set values:
 ```env
 # Core
 PROJECT_ROOT=D:/PERSONAL/LIVE_PROJECTS
+
+# LLM Provider (configure what you have)
 OLLAMA_MODEL=phi3
 OLLAMA_URL=http://localhost:11434
 OLLAMA_BIN=D:/Program Files/Ollama/ollama.exe
+
+# Optional: OpenAI
+# OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o-mini
+
+# Optional: OpenRouter
+# OPENROUTER_API_KEY=sk-or-v1-...
+# OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct:free
+
+# Telegram & API
 TELEGRAM_TOKEN=your_bot_token
 API_SECRET_KEY=your_super_secret_key
 ALLOWED_TELEGRAM_USER_ID=your_telegram_user_id
@@ -185,8 +242,9 @@ Start the server and open **http://localhost:8000/dashboard/**
 
 ### Core Endpoints
 - `GET /` - basic service status
-- `GET /status` - runtime status (model, host/port, Telegram configured/started)
-- `GET /health` - dependency health (`ollama_running`, service state)
+- `GET /status` - runtime status (model, LLM provider, Telegram configured/started)
+- `GET /health` - dependency health (all LLM providers, service state)
+- `GET /llm-providers` - detailed status of all LLM providers (Ollama, OpenAI, OpenRouter, LM Studio, Mock)
 - `POST /chat` - public chat (no command execution)
 - `WS /ws/chat` - real-time token streaming chat (`[DONE]` marks completion)
 
