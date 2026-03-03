@@ -30,7 +30,7 @@ class AyazGitDyGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("AyazGitDy - Git Commit Automation")
-        self.root.geometry("800x700")
+        self.root.geometry("900x750")
         self.root.resizable(True, True)
         
         # State
@@ -43,16 +43,29 @@ class AyazGitDyGUI:
         self.current_branch = tk.StringVar(value="—")
         self.files_changed = tk.StringVar(value="0")
         
+        # System availability status
+        self.system_status = {
+            "git": False,
+            "gh_cli": False,
+            "gh_copilot": False,
+            "ollama": False,
+            "python": False
+        }
+        
         self.setup_ui()
+        self.check_system_status()
         self.refresh_status()
     
     def setup_ui(self):
         """Build the GUI layout."""
         # Configure grid weights for responsive layout
-        self.root.grid_rowconfigure(6, weight=1)
+        self.root.grid_rowconfigure(7, weight=1)  # Changed from 6 to 7 for new row
         self.root.grid_columnconfigure(0, weight=1)
         
-        # Title
+        # System Status Bar (Row 0)
+        self.setup_system_status_bar()
+        
+        # Title (Row 1)
         title = tk.Label(
             self.root, 
             text="🚀 AyazGitDy - Intelligent Git Commit Automation",
@@ -61,11 +74,11 @@ class AyazGitDyGUI:
             fg="white",
             pady=10
         )
-        title.grid(row=0, column=0, sticky="ew")
+        title.grid(row=1, column=0, sticky="ew")
         
-        # Repository Path Section
+        # Repository Path Section (Row 2)
         repo_frame = ttk.LabelFrame(self.root, text="Repository", padding=10)
-        repo_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+        repo_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
         repo_frame.grid_columnconfigure(1, weight=1)
         
         ttk.Label(repo_frame, text="Path:").grid(row=0, column=0, sticky="w", padx=5)
@@ -73,9 +86,9 @@ class AyazGitDyGUI:
         ttk.Button(repo_frame, text="Browse...", command=self.browse_repo, width=10).grid(row=0, column=2, padx=5)
         ttk.Button(repo_frame, text="Refresh", command=self.refresh_status, width=10).grid(row=0, column=3, padx=5)
         
-        # Status Section
+        # Status Section (Row 3)
         status_frame = ttk.LabelFrame(self.root, text="Repository Status", padding=10)
-        status_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        status_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
         status_frame.grid_columnconfigure(1, weight=1)
         status_frame.grid_columnconfigure(3, weight=1)
         
@@ -88,9 +101,9 @@ class AyazGitDyGUI:
         ttk.Label(status_frame, text="Detected Type:").grid(row=1, column=0, sticky="w", padx=5)
         ttk.Label(status_frame, textvariable=self.detected_type, foreground="#27ae60", font=("Segoe UI", 9, "bold")).grid(row=1, column=1, sticky="w", padx=5)
         
-        # Commit Options Section
+        # Commit Options Section (Row 4)
         options_frame = ttk.LabelFrame(self.root, text="Commit Options", padding=10)
-        options_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
+        options_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
         options_frame.grid_columnconfigure(1, weight=1)
         
         ttk.Label(options_frame, text="Jira Ticket:").grid(row=0, column=0, sticky="w", padx=5)
@@ -102,27 +115,27 @@ class AyazGitDyGUI:
         
         ttk.Checkbutton(options_frame, text="Commit only (do not push)", variable=self.no_push).grid(row=2, column=1, sticky="w", padx=5, pady=5)
         
-        # Changes Preview Section
+        # Changes Preview Section (Row 5)
         preview_frame = ttk.LabelFrame(self.root, text="Changes Preview", padding=10)
-        preview_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
+        preview_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=5)
         preview_frame.grid_columnconfigure(0, weight=1)
         
         self.changes_text = scrolledtext.ScrolledText(preview_frame, height=8, wrap=tk.WORD, bg="#f8f9fa", font=("Consolas", 9))
         self.changes_text.grid(row=0, column=0, sticky="nsew", pady=5)
         preview_frame.grid_rowconfigure(0, weight=1)
         
-        # Commit Message Preview Section
+        # Commit Message Preview Section (Row 6)
         message_frame = ttk.LabelFrame(self.root, text="Generated Commit Message", padding=10)
-        message_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=5)
+        message_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=5)
         message_frame.grid_columnconfigure(0, weight=1)
         
         self.message_text = scrolledtext.ScrolledText(message_frame, height=8, wrap=tk.WORD, bg="#ecf0f1", font=("Consolas", 9))
         self.message_text.grid(row=0, column=0, sticky="nsew", pady=5)
         message_frame.grid_rowconfigure(0, weight=1)
         
-        # Action Buttons
+        # Action Buttons (Row 7)
         button_frame = ttk.Frame(self.root, padding=10)
-        button_frame.grid(row=6, column=0, sticky="ew", padx=10, pady=10)
+        button_frame.grid(row=7, column=0, sticky="ew", padx=10, pady=10)
         button_frame.grid_columnconfigure(0, weight=1)
         button_frame.grid_columnconfigure(1, weight=1)
         button_frame.grid_columnconfigure(2, weight=1)
@@ -158,7 +171,7 @@ class AyazGitDyGUI:
             height=2
         ).grid(row=0, column=2, sticky="ew", padx=5)
         
-        # Status Bar
+        # Status Bar (Row 8)
         self.status_bar = tk.Label(
             self.root, 
             text="Ready", 
@@ -169,7 +182,185 @@ class AyazGitDyGUI:
             fg="white",
             font=("Segoe UI", 9)
         )
-        self.status_bar.grid(row=7, column=0, sticky="ew")
+        self.status_bar.grid(row=8, column=0, sticky="ew")
+    
+    def setup_system_status_bar(self):
+        """Create system status indicator bar showing installed tools."""
+        status_bar = tk.Frame(self.root, bg="#34495e", pady=5)
+        status_bar.grid(row=0, column=0, sticky="ew")
+        status_bar.grid_columnconfigure(5, weight=1)
+        
+        # Title
+        tk.Label(
+            status_bar,
+            text="System:",
+            bg="#34495e",
+            fg="white",
+            font=("Segoe UI", 9, "bold")
+        ).grid(row=0, column=0, padx=(10, 5))
+        
+        # Status indicators (will be updated by check_system_status)
+        self.git_indicator = self._create_indicator(status_bar, "Git", 1)
+        self.gh_cli_indicator = self._create_indicator(status_bar, "GitHub CLI", 2)
+        self.gh_copilot_indicator = self._create_indicator(status_bar, "Copilot", 3)
+        self.ollama_indicator = self._create_indicator(status_bar, "Ollama", 4)
+        
+        # Setup button (opens terminal for installation/login)
+        tk.Button(
+            status_bar,
+            text="⚙ Setup Tools",
+            command=self.open_setup_terminal,
+            bg="#95a5a6",
+            fg="white",
+            font=("Segoe UI", 8),
+            relief=tk.FLAT,
+            cursor="hand2"
+        ).grid(row=0, column=6, padx=(5, 10))
+    
+    def _create_indicator(self, parent, name: str, column: int):
+        """Create a status indicator label."""
+        indicator = tk.Label(
+            parent,
+            text=f"● {name}",
+            bg="#34495e",
+            fg="#95a5a6",  # Gray by default (unchecked)
+            font=("Segoe UI", 8),
+            cursor="hand2"
+        )
+        indicator.grid(row=0, column=column, padx=5)
+        
+        # Store reference for tooltip
+        indicator.bind("<Enter>", lambda e: self._show_tooltip(indicator, name))
+        indicator.bind("<Leave>", lambda e: self._hide_tooltip())
+        
+        return indicator
+    
+    def check_system_status(self):
+        """Check which system tools are installed and update indicators."""
+        import shutil
+        import subprocess as sp
+        
+        # Check Git
+        self.system_status["git"] = shutil.which("git") is not None
+        self._update_indicator(self.git_indicator, self.system_status["git"], "Git installed" if self.system_status["git"] else "Git not found")
+        
+        # Check GitHub CLI
+        self.system_status["gh_cli"] = shutil.which("gh") is not None
+        self._update_indicator(self.gh_cli_indicator, self.system_status["gh_cli"], "GitHub CLI installed" if self.system_status["gh_cli"] else "Install: winget install GitHub.cli")
+        
+        # Check GitHub Copilot extension
+        if self.system_status["gh_cli"]:
+            try:
+                result = sp.run(["gh", "copilot", "--version"], capture_output=True, timeout=5)
+                self.system_status["gh_copilot"] = result.returncode == 0
+            except:
+                self.system_status["gh_copilot"] = False
+        else:
+            self.system_status["gh_copilot"] = False
+        
+        self._update_indicator(self.gh_copilot_indicator, self.system_status["gh_copilot"], 
+                               "Copilot CLI ready" if self.system_status["gh_copilot"] else "Install: gh extension install github/gh-copilot")
+        
+        # Check Ollama
+        self.system_status["ollama"] = shutil.which("ollama") is not None
+        self._update_indicator(self.ollama_indicator, self.system_status["ollama"], 
+                               "Ollama installed" if self.system_status["ollama"] else "Download: https://ollama.com/download")
+    
+    def _update_indicator(self, indicator, available: bool, tooltip: str):
+        """Update indicator color based on availability."""
+        if available:
+            indicator.config(fg="#27ae60")  # Green
+        else:
+            indicator.config(fg="#e74c3c")  # Red
+        
+        # Store tooltip text
+        indicator.tooltip = tooltip
+    
+    def _show_tooltip(self, widget, name: str):
+        """Show tooltip on hover (simple implementation)."""
+        tooltip = getattr(widget, "tooltip", name)
+        self.status_bar.config(text=tooltip)
+    
+    def _hide_tooltip(self):
+        """Hide tooltip."""
+        self.status_bar.config(text="Ready")
+    
+    def open_setup_terminal(self):
+        """Open terminal with setup instructions."""
+        import subprocess
+        import platform
+        
+        # Determine which tools need setup
+        missing_tools = []
+        
+        if not self.system_status["git"]:
+            missing_tools.append("Git: winget install Git.Git")
+        
+        if not self.system_status["gh_cli"]:
+            missing_tools.append("GitHub CLI: winget install GitHub.cli")
+        
+        if self.system_status["gh_cli"] and not self.system_status["gh_copilot"]:
+            missing_tools.append("Copilot: gh extension install github/gh-copilot && gh auth login")
+        
+        if not self.system_status["ollama"]:
+            missing_tools.append("Ollama: Download from https://ollama.com/download")
+        
+        # Create setup script
+        if platform.system() == "Windows":
+            script = "@echo off\n"
+            script += "title AyazGitDy - System Setup\n"
+            script += "echo.\n"
+            script += "echo ========================================\n"
+            script += "echo  AyazGitDy - System Setup\n"
+            script += "echo ========================================\n"
+            script += "echo.\n"
+            
+            if missing_tools:
+                script += "echo Missing tools detected:\n"
+                script += "echo.\n"
+                for tool in missing_tools:
+                    script += f"echo   - {tool}\n"
+                script += "echo.\n"
+                script += "echo Run these commands to install:\n"
+                script += "echo.\n"
+                
+                if not self.system_status["git"]:
+                    script += "echo winget install Git.Git\n"
+                
+                if not self.system_status["gh_cli"]:
+                    script += "echo winget install GitHub.cli\n"
+                
+                if self.system_status["gh_cli"] and not self.system_status["gh_copilot"]:
+                    script += "echo gh extension install github/gh-copilot\n"
+                    script += "echo gh auth login\n"
+                
+                if not self.system_status["ollama"]:
+                    script += "echo.\n"
+                    script += "echo Ollama: Download from https://ollama.com/download\n"
+            else:
+                script += "echo All tools are installed!\n"
+                script += "echo.\n"
+                
+                if self.system_status["gh_cli"]:
+                    script += "echo To login to GitHub Copilot:\n"
+                    script += "echo   gh auth login\n"
+                    script += "echo.\n"
+            
+            script += "echo.\n"
+            script += "pause\n"
+            
+            # Write temp batch file
+            temp_bat = Path("temp_setup.bat")
+            temp_bat.write_text(script, encoding="utf-8")
+            
+            # Open in new terminal
+            subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", str(temp_bat)])
+        else:
+            # Linux/Mac: open terminal with commands
+            messagebox.showinfo(
+                "Setup Instructions",
+                "\n".join(missing_tools) if missing_tools else "All tools installed!"
+            )
     
     def browse_repo(self):
         """Open directory browser to select repository."""
