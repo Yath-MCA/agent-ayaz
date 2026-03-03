@@ -12,19 +12,29 @@ import subprocess
 import re
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
+import shutil
 
 
 class GitService:
     """Git operations service for intelligent commit automation."""
     
-    def __init__(self, repo_path: Optional[str] = None):
+    def __init__(self, repo_path: Optional[str] = None, use_copilot_cli: bool = False):
         """
         Initialize Git service.
         
         Args:
             repo_path: Path to Git repository (defaults to current directory)
+            use_copilot_cli: Use GitHub Copilot CLI for message generation (default: False)
         """
         self.repo_path = Path(repo_path) if repo_path else Path.cwd()
+        self.use_copilot_cli = use_copilot_cli
+        self._copilot_available = None
+    
+    def is_copilot_cli_available(self) -> bool:
+        """Check if GitHub Copilot CLI is installed."""
+        if self._copilot_available is None:
+            self._copilot_available = shutil.which("gh") is not None
+        return self._copilot_available
     
     def validate_repository(self) -> Tuple[bool, str]:
         """
@@ -244,6 +254,72 @@ class GitService:
         if body_lines:
             return f"{title}\n\n" + "\n".join(body_lines)
         return title
+    
+    def generate_commit_message_with_copilot(
+        self,
+        jira_ticket: Optional[str] = None,
+        context: Optional[str] = None
+    ) -> Optional[str]:
+        """
+        Generate commit message using GitHub Copilot CLI.
+        
+        Args:
+            jira_ticket: Optional Jira ticket (e.g., "ABC-123")
+            context: Optional context to include in prompt
+        
+        Returns:
+            Generated commit message or None if Copilot unavailable
+        """
+        if not self.is_copilot_cli_available():
+            return None
+        
+        try:
+            # Get diff for context
+            diff_stat = self.get_diff_stat()
+            
+            # Build prompt
+            prompt = "Write a conventional commit message for these changes:\n\n"
+            prompt += diff_stat
+            
+            if jira_ticket:
+                prompt = f"Write a conventional commit message for {jira_ticket}:\n\n{diff_stat}"
+            
+            if context:
+                prompt += f"\n\nContext: {context}"
+            
+            # Call gh copilot suggest
+            result = subprocess.run(
+                ["gh", "copilot", "suggest", prompt],
+                cwd=str(self.repo_path),
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                # Extract the suggestion from output
+                output = result.stdout.strip()
+                
+                # Try to extract just the commit message
+                lines = output.split("\n")
+                
+                # Look for lines that start with conventional commit types
+                commit_types = ["feat", "fix", "docs", "style", "refactor", "test", "chore", "perf", "build", "ci"]
+                for line in lines:
+                    line_lower = line.lower().strip()
+                    if any(line_lower.startswith(ct) for ct in commit_types):
+                        return line.strip()
+                
+                # If no conventional commit found, return first non-empty line
+                for line in lines:
+                    if line.strip():
+                        return line.strip()
+            
+            return None
+        
+        except Exception as e:
+            print(f"Warning: Copilot CLI failed: {e}")
+            return None
     
     def validate_jira_ticket(self, ticket: str) -> bool:
         """
