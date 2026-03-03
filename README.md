@@ -1,38 +1,77 @@
-# 🤖 AI DevOps Agent
+# 🤖 Agent Ayazdy — AI DevOps Agent
 
-FastAPI + Telegram + Local Ollama integration for secure DevOps task automation on Windows.
+**14-Phase Production-Grade Agent Architecture** — FastAPI + Telegram + Ollama + React Dashboard
+
+Full multi-agent system with planning, validation, execution auditing, approval workflows, memory layer, plugin system, RBAC, CLI control, and web-based monitoring.
 
 ---
 
 ## 📌 Overview
 
-AI DevOps Agent provides:
+**Agent Ayazdy** is a sophisticated AI DevOps agent that provides:
 
-- Remote prompt handling through Telegram and REST
-- Local model inference through Ollama
-- Protected task execution limited to `PROJECT_ROOT`
-- API-key protection for sensitive endpoints
+- 🧠 **Multi-agent architecture** — Planner → Validator → Executor → Auditor pipeline
+- 🔐 **Token-based approval workflow** — Review plans before execution
+- 📊 **SQLite memory layer** — Execution history, stats, retry suggestions
+- 🎯 **Risk scoring** — 1-10 scale with autonomous mode controls
+- 🔌 **Plugin system** — 4 lifecycle hooks (before_plan, after_validation, after_execution, on_error)
+- 👥 **RBAC** — Admin/Operator/Viewer roles
+- 🖥️ **React dashboard** — Real-time monitoring, approvals, logs, SSE streaming
+- 📋 **Task queue system** — File-based queue/completed/later lifecycle
+- 🛠️ **CLI wrapper** — `ayazdy` command for terminal control
+- 📡 **Telegram bot** — Remote control with 15+ commands
+- 🌐 **REST API** — 40+ endpoints for full programmatic control
 
-It complements IDE workflows (including GitHub Copilot) and focuses on controlled automation.
+It complements IDE workflows (including GitHub Copilot) and focuses on **controlled, auditable, intelligent automation**.
 
 ---
 
 ## 🧠 Architecture
 
 ```text
-ai-agent/
-├── main.py                      # Composition root (FastAPI app + startup)
+agent-ayazdy/
+├── main.py                      # FastAPI app + agent pipeline composition
 ├── config/
 │   └── settings.py              # Environment/config loading
 ├── security/
-│   └── command_filter.py        # Command policy/validation
+│   ├── command_filter.py        # Command policy/validation
+│   └── rbac.py                  # Role-based access control
+├── agents/                      # 🔥 Multi-agent system
+│   ├── planner.py               # LLM → ExecutionPlan JSON
+│   ├── validator.py             # Policy gate (approve/reject)
+│   ├── executor.py              # Validated plan execution
+│   ├── auditor.py               # Immutable JSONL audit log
+│   ├── approval.py              # Token-based approval store
+│   ├── task_dsl.py              # YAML task DSL loader/validator
+│   ├── risk.py                  # Risk scoring engine (1-10 scale)
+│   ├── replay.py                # Replay execution by ID
+│   ├── optimizer.py             # Memory-driven prompt augmentation
+│   ├── mode.py                  # SAFE/CONTROLLED/AUTONOMOUS modes
+│   └── nodes.py                 # Distributed node registry
 ├── services/
 │   ├── ollama_service.py        # Ollama HTTP integration
-│   ├── telegram_service.py      # Telegram bot integration
-│   └── execution_service.py     # Command execution wrapper
-├── project_utils.py             # PROJECT_ROOT project path utilities
-├── requirements.txt
-├── .env.example                 # Safe env template
+│   ├── telegram_service.py      # Telegram bot (15+ commands)
+│   ├── execution_service.py     # Command execution wrapper
+│   ├── memory_service.py        # SQLite execution history (logs/memory.db)
+│   └── task_queue_service.py    # File-based task queue lifecycle
+├── plugins/                     # 🔌 Plugin system
+│   ├── __init__.py              # PluginManager with 4 lifecycle hooks
+│   └── logger_plugin.py         # Example plugin
+├── cli/                         # 🛠️ CLI control interface
+│   ├── cli.py                   # Argparse entrypoint
+│   ├── client.py                # REST API wrapper
+│   └── commands.py              # Command implementations
+├── dashboard/                   # 🖥️ React Control Center
+│   ├── index.html               # CDN-based React app (zero build)
+│   ├── js/app.js                # Dashboard UI (~350 lines)
+│   └── README.md                # Dashboard setup guide
+├── agent-task/                  # 📋 Task queue folders
+│   ├── queue/                   # Tasks to process
+│   ├── completed/               # Completed tasks (01-07 phase specs)
+│   └── later/                   # Future tasks
+├── project_utils.py             # PROJECT_ROOT utilities
+├── ayazdy.bat                   # Windows OS-level wrapper
+├── requirements.txt             # Python dependencies
 └── README.md
 ```
 
@@ -60,6 +99,7 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and set values:
 
 ```env
+# Core
 PROJECT_ROOT=D:/PERSONAL/LIVE_PROJECTS
 OLLAMA_MODEL=phi3
 OLLAMA_URL=http://localhost:11434
@@ -70,6 +110,14 @@ ALLOWED_TELEGRAM_USER_ID=your_telegram_user_id
 HOST=0.0.0.0
 PORT=8000
 CORS_ORIGINS=http://localhost,http://127.0.0.1
+
+# Agent Mode (SAFE | CONTROLLED | AUTONOMOUS)
+AGENT_MODE=CONTROLLED
+AUTONOMOUS_RISK_THRESHOLD=3
+AUTONOMOUS_MAX_RETRIES=2
+
+# RBAC (optional: admin/operator/viewer)
+# RBAC_ROLES=api_key_1:admin,api_key_2:operator,api_key_3:viewer
 ```
 
 If Ollama is installed in a custom folder, set `OLLAMA_BIN` to the full executable path.
@@ -85,31 +133,124 @@ python main.py
 
 ---
 
+## 🚀 Quick Start
+
+### Terminal Control (CLI)
+
+```bash
+# Health check
+ayazdy health
+
+# List projects
+ayazdy projects
+
+# Select project
+ayazdy select my-project
+
+# Check queue status
+ayazdy qstatus
+
+# Run queue tasks
+ayazdy qrun
+
+# View execution history
+ayazdy history
+
+# View stats
+ayazdy stats
+
+# Self-check diagnostics
+ayazdy self-check
+```
+
+### Web Dashboard
+
+Start the server and open **http://localhost:8000/dashboard/**
+
+**Features:**
+- Health + Stats panels
+- Project selector
+- Execution history with risk badges
+- Approval queue (approve/reject buttons)
+- Audit log viewer
+- Live SSE log stream
+- Self-check runner
+- Retry suggestions
+
+**First-time setup:** Click ⚙️ Settings → enter API URL + API Key
+
+---
+
 ## 🔐 API Endpoints
 
+### Core Endpoints
 - `GET /` - basic service status
 - `GET /status` - runtime status (model, host/port, Telegram configured/started)
 - `GET /health` - dependency health (`ollama_running`, service state)
 - `POST /chat` - public chat (no command execution)
 - `WS /ws/chat` - real-time token streaming chat (`[DONE]` marks completion)
-- `POST /run-task` - protected by `X-Api-Key`, optional command execution
-- `POST /run-project` - protected by `X-Api-Key`, command execution in selected project
-- `GET /projects` - protected, list projects under `PROJECT_ROOT`
-- `POST /project/select` - protected, choose project, open in VS Code, and return `run-task/` availability
-- `GET /project/current` - protected, get current selected project for the current API key
-- `GET /project/tasks?project=<name>` - protected, list files in project `run-task/`
-- `POST /project/run-task` - protected, execute one file from project `run-task/` (`dry_run`, `auto_approve`, `delay_seconds` supported)
-- `POST /project/run-custom` - protected, execute custom command in selected project path (`dry_run`, `auto_approve`, `delay_seconds` supported)
+
+### Project Management (Protected)
+- `GET /projects` - list projects under `PROJECT_ROOT`
+- `POST /project/select` - choose project, open in VS Code
+- `GET /project/current` - get current selected project for API key
+- `GET /project/tasks?project=<name>` - list files in project `run-task/`
+- `POST /project/run-task` - execute one file from project `run-task/`
+- `POST /project/run-custom` - execute custom command in selected project
+- `POST /project/run-all-tasks` - run all tasks in order
+
+### Agent System (Protected)
+- `POST /run-task` - execute task via agent pipeline (Planner→Validator→Executor→Auditor)
+- `POST /run-project` - execute task in selected project via agent pipeline
+
+### Monitoring (Protected)
+- `GET /monitor/health` - agent health (mode, plugins, nodes, queue, memory)
+- `GET /monitor/logs?limit=N` - audit log entries
+- `GET /monitor/history?project=X&limit=N` - execution history
+- `GET /monitor/stats` - total executions, failures, avg duration, top project/task
+- `GET /monitor/approvals` - pending/approved/rejected approval tokens
+- `POST /monitor/approve/{token}` - approve pending plan
+- `POST /monitor/reject/{token}` - reject pending plan
+- `GET /monitor/stream/logs` - SSE live log stream
+- `GET /monitor/timeline` - chronological activity timeline
+- `GET /monitor/self-check` - validate Ollama, DB, approval store, DSL
+- `GET /monitor/risk?project=X&task=Y` - get risk score for task
+- `GET /monitor/replay/{execution_id}` - replay execution by ID
+- `GET /monitor/mode` - get current agent mode (SAFE/CONTROLLED/AUTONOMOUS)
+- `GET /monitor/heatmap` - dashboard visualization data
+- `GET /monitor/nodes` - list registered nodes
+- `POST /monitor/nodes` - register new node
+- `DELETE /monitor/nodes/{node_id}` - deregister node
+
+### Task Queue (Protected)
+- `GET /queue/status` - queue/completed/later folder status
+- `POST /queue/run` - process queue tasks in order
+- `POST /queue/promote-later` - move tasks from later/ to queue/
 
 ## 🤖 Telegram Commands
 
-- `/projects` - list project folders under `PROJECT_ROOT`
-- `/project <name>` - select project, open it in VS Code, and show files inside `run-task/` if available
-- `/current` - show currently selected project
-- `/tasks` - list available files in selected project's `run-task/`
-- `/task <file_name>` - run one task file from `run-task/`
-- `/custom <command>` - run a custom command in selected project when no task files exist (or by choice)
-- `/status`, `/help`, `/id` - runtime status, command help, and Telegram user ID
+**Core:**
+- `/start`, `/help` - welcome + command list
+- `/status` - runtime status
+- `/id` - your Telegram user ID
+
+**Projects:**
+- `/projects` - list project folders
+- `/project <name>` - select project, open VS Code
+- `/current` - show current selected project
+- `/tasks` - list available files in `run-task/`
+- `/task <file_name>` - run one task file
+- `/custom <command>` - run custom command in selected project
+- `/runtasks` - run all tasks in order
+
+**Agent:**
+- `/approve <token>` - approve pending plan
+- `/reject <token>` - reject pending plan
+
+**Queue:**
+- `/qstatus` - queue status (queue/completed/later counts)
+- `/qrun` - run queue tasks
+- `/qlater` - promote later/ tasks to queue/
 
 ## 🔧 REST Examples (Windows)
 
@@ -373,6 +514,7 @@ Expected result:
 
 ## ⚙ Runtime Controls
 
+### Core Settings
 - `COMMAND_TIMEOUT`, `TASK_TIMEOUT` - execution timeout in seconds
 - `MAX_OUTPUT_CHARS` - output truncation limit
 - `STRICT_COMMAND_MODE` + `ALLOWED_COMMAND_PREFIXES` - enforce strict command prefix policy
@@ -380,42 +522,269 @@ Expected result:
 - `API_SECRET_KEYS` - comma-separated keys for key rotation
 - `AUTO_APPROVE` + `DEFAULT_EXECUTION_DELAY_SECONDS` - default auto approval and delay behavior
 
-## 🧪 Reference Client
+### Agent Mode Settings
+- `AGENT_MODE` - `SAFE` | `CONTROLLED` | `AUTONOMOUS`
+  - **SAFE** — requires approval for all tasks
+  - **CONTROLLED** — auto-approves low-risk tasks (≤3), requires approval for high-risk
+  - **AUTONOMOUS** — auto-approves, auto-retries failures (up to `AUTONOMOUS_MAX_RETRIES`)
+- `AUTONOMOUS_RISK_THRESHOLD` - max risk score for auto-approval (default: 3)
+- `AUTONOMOUS_MAX_RETRIES` - retry attempts in autonomous mode (default: 2)
 
-- Python reference client is available at `tools/api_client.py`
-- Uses structured error handling and retry logic for transport/429 scenarios
+### RBAC Settings
+- `RBAC_ROLES` - comma-separated `api_key:role` pairs
+  - Roles: `admin` (full access), `operator` (execute + monitor), `viewer` (read-only)
+  - Example: `key1:admin,key2:operator,key3:viewer`
+  - If not set, all keys default to `admin`
 
-## 🧭 Client Handling Guide
+---
 
-| Condition | Meaning | Client action |
-| --- | --- | --- |
-| `401 Unauthorized` | API key missing or invalid | Prompt for API key, refresh secret in client config, retry request |
-| `500 Server API secret is not configured` | Server missing `API_SECRET_KEY` | Fix server `.env`, restart service, retry |
-| `400 Project not found` | Project name invalid or not under `PROJECT_ROOT` | Call `GET /projects`, let user reselect, call endpoint again |
-| `400 Task file not found in run-task folder` | Task file missing/renamed/not allowed extension | Call `GET /project/tasks`, show valid files, retry with selected task |
-| Empty `tasks` in `/project/select` or `/project/tasks` | `run-task/` has no task scripts | Ask user for custom command and call `POST /project/run-custom` |
+## 🔌 Plugin System
 
-Retry policy suggestion:
+Create custom plugins in `plugins/` directory:
 
-- Retry only for transient transport failures (network timeout, connection reset).
-- Do not blind-retry `400/401/500` logical/config errors; require user/config fix first.
+```python
+# plugins/my_plugin.py
+def register(manager):
+    manager.register("before_plan", lambda ctx: print(f"Planning {ctx['task']}..."))
+    manager.register("after_validation", lambda ctx: print(f"Validated: {ctx['approved']}"))
+    manager.register("after_execution", lambda ctx: print(f"Executed: {ctx['status']}"))
+    manager.register("on_error", lambda ctx: print(f"Error: {ctx['error']}"))
+```
 
-### Realtime chat (WebSocket)
+Plugins are auto-loaded on startup. Context dict includes: `project`, `task`, `plan`, `approved`, `status`, `error`, etc.
 
-Connect to:
+---
 
-`ws://localhost:PORT/ws/chat`
+## 📋 Task Queue System
 
-Send plain text prompt messages. Server streams response chunks and sends `[DONE]` when the response is complete.
+Place `.md` or `.yaml` task files in `agent-task/queue/`:
+
+**Lifecycle:**
+1. Tasks in `queue/` are processed alphabetically
+2. Completed tasks move to `completed/`
+3. When queue is empty, system prompts to promote tasks from `later/` to `queue/`
+
+**YAML DSL Example:**
+
+```yaml
+# agent-task/queue/build_project.yaml
+type: command
+project: my-project
+task: Build and test
+command: npm run build && npm test
+auto_approve: false
+delay_seconds: 5
+```
+
+**CLI:**
+```bash
+ayazdy qstatus   # Check queue status
+ayazdy qrun      # Process queue
+ayazdy qlater    # Promote later/ to queue/
+```
+
+---
+
+## 🎯 Risk Scoring
+
+Every task is assigned a risk score (1-10):
+
+| Score | Level | Examples |
+|---|---|---|
+| 1-3 | 🟢 Low | Read-only, info commands (`git status`, `ls`) |
+| 4-6 | 🟡 Medium | Build, test, install deps |
+| 7-9 | 🔴 High | Deploy, db migrations, file deletions |
+| 10 | 🚨 Critical | Production writes, system changes |
+
+**Agent Mode Behavior:**
+- **SAFE:** All tasks require approval
+- **CONTROLLED:** Auto-approves ≤3, requires approval >3
+- **AUTONOMOUS:** Auto-approves all, auto-retries failures
+
+---
+
+## 📊 Memory Layer
+
+SQLite database at `logs/memory.db` tracks:
+- Execution history (project, task, status, duration, risk score)
+- Stats (total executions, failures, avg duration)
+- Retry suggestions (failed tasks per project)
+
+**Endpoints:**
+- `GET /monitor/history?project=X&limit=N`
+- `GET /monitor/stats`
+- `GET /monitor/replay/{execution_id}` - replay past execution
 
 ---
 
 ## 🛡 Security Notes
 
-- Protected endpoints require `X-Api-Key`
+- Protected endpoints require `X-Api-Key` header
 - Telegram access is restricted by `ALLOWED_TELEGRAM_USER_ID`
 - Command execution is filtered by allow/deny policy in `security/command_filter.py`
 - Project execution path is constrained to folders under `PROJECT_ROOT`
+- **Approval workflow:** High-risk tasks require explicit approval (token-based state machine)
+- **RBAC:** Role-based access control (admin/operator/viewer)
+- **Audit logging:** Immutable JSONL audit trail in `logs/agent_audit.log`
+- **Risk scoring:** Every task is scored 1-10 to guide approval decisions
+
+---
+
+## 🧪 Reference Client & Examples
+
+Python reference client is available at `tools/api_client.py`.
+
+### WebSocket Real-time Chat
+
+Connect to `ws://localhost:PORT/ws/chat` and send plain text prompts. Server streams response chunks and sends `[DONE]` when complete.
+
+### Client Error Handling
+
+| Condition | Meaning | Client action |
+|---|---|---|
+| `401 Unauthorized` | API key missing/invalid | Prompt for API key, retry |
+| `403 Forbidden` | Insufficient RBAC role | Request admin access or switch endpoint |
+| `400 Project not found` | Invalid project name | Call `GET /projects`, reselect |
+| `400 Task file not found` | Missing task file | Call `GET /project/tasks`, choose valid file |
+| `500 Server error` | Server config issue | Check logs, fix `.env`, restart |
+
+**Retry policy:** Only retry transient transport failures. Do not retry `400/401/403/500` without fixing root cause.
+
+---
+
+## 📖 14-Phase Architecture Details
+
+<details>
+<summary><b>Phase 1: Multi-Agent Split</b></summary>
+
+- **Planner** (`agents/planner.py`) — LLM generates structured ExecutionPlan JSON
+- **Validator** (`agents/validator.py`) — Policy gate, approves/rejects plans
+- **Executor** (`agents/executor.py`) — Executes validated plans only
+- **Auditor** (`agents/auditor.py`) — Immutable JSONL audit log
+
+</details>
+
+<details>
+<summary><b>Phase 2: Task DSL System</b></summary>
+
+- YAML task definitions (`agents/task_dsl.py`)
+- Validation and loading of `.yaml` task files
+- Example tasks in `agent-task/examples/`
+
+</details>
+
+<details>
+<summary><b>Phase 3: Approval Workflow</b></summary>
+
+- Token-based approval store (`agents/approval.py`)
+- State machine: pending → approved/rejected/timed_out
+- `/monitor/approve/{token}`, `/monitor/reject/{token}` endpoints
+
+</details>
+
+<details>
+<summary><b>Phase 4: Memory Layer</b></summary>
+
+- SQLite database at `logs/memory.db` (`services/memory_service.py`)
+- Execution history with project, task, status, duration, risk score
+- Stats aggregation, retry suggestions
+
+</details>
+
+<details>
+<summary><b>Phase 5: Advanced Isolation & Monitoring</b></summary>
+
+- Health, logs, history, approvals endpoints
+- `/monitor/health`, `/monitor/logs`, `/monitor/history`, `/monitor/approvals`
+
+</details>
+
+<details>
+<summary><b>Phase 6: CLI + Dashboard Control Center</b></summary>
+
+- **CLI:** `ayazdy` command (`cli/cli.py`) with 15+ subcommands
+- **OS wrapper:** `ayazdy.bat` for Windows PATH integration
+- **SSE streaming:** `/monitor/stream/logs` for live events
+- **Stats endpoint:** `/monitor/stats` (executions, failures, avg duration)
+- **Self-check:** `/monitor/self-check` (Ollama, DB, approval store, DSL)
+- **React dashboard:** CDN-based UI at `/dashboard/` (zero build step)
+  - Overview: Health + Stats + Project selector
+  - History: Execution table with risk badges
+  - Approvals: Approve/Reject buttons
+  - Logs: Audit log viewer
+  - Live Stream: SSE log stream
+  - Tools: Self-check + retry suggestions
+
+</details>
+
+<details>
+<summary><b>Phase 7: Risk Scoring</b></summary>
+
+- Risk engine (`agents/risk.py`) — scores tasks 1-10
+- `/monitor/risk?project=X&task=Y` endpoint
+- Integrated into agent pipeline for approval decisions
+
+</details>
+
+<details>
+<summary><b>Phase 8: Replay Execution</b></summary>
+
+- Replay past executions by ID (`agents/replay.py`)
+- `/monitor/replay/{execution_id}` endpoint
+- Deterministic re-execution with diff comparison
+
+</details>
+
+<details>
+<summary><b>Phase 9: Memory-Driven Optimizer</b></summary>
+
+- Prompt augmentation based on execution history (`agents/optimizer.py`)
+- Injects context about past failures/successes into planner prompts
+
+</details>
+
+<details>
+<summary><b>Phase 10: Agent Mode Control</b></summary>
+
+- 3 modes: SAFE, CONTROLLED, AUTONOMOUS (`agents/mode.py`)
+- `/monitor/mode` endpoint
+- Controls auto-approval, auto-retry behavior
+
+</details>
+
+<details>
+<summary><b>Phase 11: Plugin System</b></summary>
+
+- 4 lifecycle hooks: `before_plan`, `after_validation`, `after_execution`, `on_error`
+- Auto-discovery from `plugins/` directory (`plugins/__init__.py`)
+- Example: `plugins/logger_plugin.py`
+
+</details>
+
+<details>
+<summary><b>Phase 12: Heatmap Data</b></summary>
+
+- `/monitor/heatmap` endpoint for dashboard visualization
+- Execution frequency, failure hotspots, risk distribution
+
+</details>
+
+<details>
+<summary><b>Phase 13: Distributed Node Registry</b></summary>
+
+- Node registration system (`agents/nodes.py`)
+- `/monitor/nodes/*` endpoints for distributed execution
+
+</details>
+
+<details>
+<summary><b>Phase 14: RBAC</b></summary>
+
+- Role-based access control (`security/rbac.py`)
+- 3 roles: admin, operator, viewer
+- Enforced via `require_protected_access()` in all protected endpoints
+
+</details>
 
 ---
 
@@ -429,11 +798,72 @@ cloudflared tunnel --url http://localhost:8000
 
 ## ✅ Production Checklist
 
-- Strong `API_SECRET_KEY`
-- Correct `PROJECT_ROOT`
-- Rotated/valid Telegram token
-- Ollama running and reachable
-- Firewall and reverse-proxy rules verified
+### Security
+- [ ] Strong `API_SECRET_KEY` set in `.env`
+- [ ] `RBAC_ROLES` configured for multi-user access
+- [ ] `ALLOWED_TELEGRAM_USER_ID` restricted to trusted users
+- [ ] Firewall rules verified (if exposing externally)
+
+### Configuration
+- [ ] Correct `PROJECT_ROOT` path set
+- [ ] `AGENT_MODE` set to appropriate level (SAFE/CONTROLLED/AUTONOMOUS)
+- [ ] `AUTONOMOUS_RISK_THRESHOLD` tuned for your risk tolerance
+- [ ] Ollama running and reachable at `OLLAMA_URL`
+
+### Monitoring
+- [ ] Dashboard accessible at `/dashboard/`
+- [ ] Audit log writing to `logs/agent_audit.log`
+- [ ] Memory database created at `logs/memory.db`
+- [ ] Plugins auto-loading from `plugins/` directory
+
+### Testing
+- [ ] Run `ayazdy health` — all checks pass
+- [ ] Run `ayazdy self-check` — Ollama, DB, approval store, DSL validated
+- [ ] Test approval workflow: reject high-risk task, approve low-risk
+- [ ] Verify queue processing: place test `.yaml` in `agent-task/queue/`, run `ayazdy qrun`
+
+---
+
+## 🧭 Troubleshooting
+
+**Dashboard can't connect to API**
+- Check API URL in Settings (⚙️ icon) — should be `http://127.0.0.1:8000`
+- Verify API key matches `API_SECRET_KEY` from `.env`
+- Check CORS settings — `CORS_ORIGINS` must include dashboard origin
+
+**Telegram bot not responding**
+- Verify `TELEGRAM_TOKEN` is valid
+- Check `ALLOWED_TELEGRAM_USER_ID` matches your Telegram user ID (use `/id` command)
+- Ensure Telegram service started successfully (check startup logs)
+
+**"Ollama not running" error**
+- Start Ollama: `ollama serve` or run Ollama Desktop app
+- Verify `OLLAMA_URL` in `.env` (default: `http://localhost:11434`)
+- Test manually: `ollama list` should show installed models
+
+**Tasks stuck in "pending" approval**
+- Check `/monitor/approvals` for pending tokens
+- Approve via CLI: `ayazdy approve <token>`
+- Or via dashboard: Approvals tab → ✔ Approve button
+- Or via Telegram: `/approve <token>`
+
+**High memory usage from SQLite**
+- Periodically archive old entries from `logs/memory.db`
+- Or delete the file (will reset history) — auto-recreates on next run
+
+**Plugin not loading**
+- Check plugin file doesn't start with `_` (those are skipped)
+- Verify `register(manager)` function exists
+- Check startup logs for plugin load messages
+
+---
+
+## 📚 Further Reading
+
+- **Dashboard Guide:** `dashboard/README.md`
+- **Task Queue Specs:** `agent-task/completed/01-07` (phase implementation specs)
+- **Plugin Development:** See `plugins/logger_plugin.py` for example
+- **API Client Reference:** `tools/api_client.py`
 
 ---
 
