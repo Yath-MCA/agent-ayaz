@@ -1169,6 +1169,73 @@ def build_telegram():
             + "\n\nUse /qrun to process them."
         )
 
+    def handle_git_commit(path: str, jira: str, remark: str, no_push: bool) -> str:
+        from tools.git_service import GitService
+        
+        # Use selected project path if no path provided
+        if not path and selected_project["path"]:
+            path = selected_project["path"]
+        
+        git = GitService(path)
+        
+        # Validate repository
+        is_valid, error = git.validate_repository()
+        if not is_valid:
+            return f"❌ {error}"
+        
+        # Get current branch
+        branch = git.get_current_branch()
+        
+        # Warn if protected branch
+        if git.is_protected_branch(branch):
+            return f"⚠️ Protected branch '{branch}'. Use CLI for manual control: python tools/ayazgitdy.py"
+        
+        # Get changes
+        changes = git.get_status()
+        if changes["total"] == 0:
+            return "ℹ️ No changes detected. Nothing to commit."
+        
+        # Detect commit type and generate message
+        diff = git.get_diff()
+        diff_stat = git.get_diff_stat()
+        commit_type = git.detect_commit_type(changes, diff)
+        summary = git.generate_commit_summary(changes, diff_stat)
+        
+        # Validate Jira if provided
+        if jira and not git.validate_jira_ticket(jira):
+            return f"❌ Invalid Jira format: {jira} (expected: ABC-123)"
+        
+        # Generate commit message
+        message = git.format_commit_message(
+            commit_type=commit_type,
+            summary=summary,
+            changes=changes,
+            jira_ticket=jira.upper() if jira else None,
+            remark=remark
+        )
+        
+        # Execute commit and push
+        should_push = not no_push
+        result = git.commit_and_push(message, push=should_push)
+        
+        if not result["success"]:
+            return f"❌ Commit failed: {result['error']}"
+        
+        response_lines = [
+            f"✅ Branch: {result['branch']}",
+            f"✅ Commit: {result['commit_hash']}",
+            f"✅ Files: {changes['total']} changed",
+        ]
+        
+        if result["pushed"]:
+            response_lines.append(f"✅ Pushed to origin/{result['branch']}")
+        else:
+            response_lines.append("ℹ️ Committed locally (not pushed)")
+        
+        response_lines.append(f"\n📝 Message:\n{message[:200]}...")
+        
+        return "\n".join(response_lines)
+
     service = TelegramService(
         token=settings.telegram_token,
         allowed_user_id=settings.allowed_telegram_user_id,
@@ -1186,6 +1253,7 @@ def build_telegram():
         queue_status_handler=handle_queue_status,
         queue_run_handler=handle_queue_run,
         promote_later_handler=handle_promote_later,
+        git_commit_handler=handle_git_commit,
     )
     return service.build_application()
 

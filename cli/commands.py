@@ -166,3 +166,25 @@ def cmd_self_check(client: AgentClient, raw: bool) -> None:
             print(f"  {icon} {key}: {val}")
         return
     _print(data, raw)
+
+
+def cmd_gitcommit(path: Optional[str], jira: Optional[str], remark: Optional[str], no_push: bool, raw: bool) -> None:
+    """Run standalone Git commit automation."""
+    import sys
+    import subprocess
+    
+    args = ["python", "tools/ayazgitdy.py"]
+    
+    if path:
+        args.extend(["--path", path])
+    if jira:
+        args.extend(["--jira", jira])
+    if remark:
+        args.extend(["--remark", remark])
+    if no_push:
+        args.append("--no-push")
+    
+    # Run standalone script directly
+    result = subprocess.run(args, capture_output=False, text=True)
+    sys.exit(result.returncode)
+

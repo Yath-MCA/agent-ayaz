@@ -23,6 +23,7 @@ class TelegramService:
         queue_status_handler: Callable[[], str],
         queue_run_handler: Callable[[], Awaitable[str]],
         promote_later_handler: Callable[[], str],
+        git_commit_handler: Callable[[str, str, str, bool], str],
     ) -> None:
         self.token = token
         self.allowed_user_id = allowed_user_id
@@ -40,6 +41,7 @@ class TelegramService:
         self.queue_status_handler = queue_status_handler
         self.queue_run_handler = queue_run_handler
         self.promote_later_handler = promote_later_handler
+        self.git_commit_handler = git_commit_handler
 
     def is_allowed(self, update) -> bool:
         return (
@@ -78,6 +80,7 @@ class TelegramService:
             "/qstatus - show queue/later/completed task status\n"
             "/qrun - process all tasks in queue/ in order\n"
             "/qlater - promote later/ tasks into queue/ (when queue is empty)\n"
+            "/gitcommit [--jira ABC-123] [--remark \"note\"] [--path /repo] [--no-push] - auto-commit git changes\n"
             "/approve <token> - approve a pending task execution\n"
             "/reject <token> - reject a pending task execution\n"
             "/custom <command> - run custom command in selected project\n"
@@ -182,6 +185,39 @@ class TelegramService:
             return
         await update.message.reply_text(self.promote_later_handler()[:4000])
 
+    async def cmd_gitcommit(self, update, context) -> None:
+        if await self.deny_if_not_allowed(update):
+            return
+        
+        # Parse arguments: /gitcommit [--jira ABC-123] [--remark "text"] [--no-push]
+        args = context.args if context.args else []
+        
+        jira = None
+        remark = None
+        no_push = False
+        path = None
+        
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg == "--jira" and i + 1 < len(args):
+                jira = args[i + 1]
+                i += 2
+            elif arg == "--remark" and i + 1 < len(args):
+                remark = args[i + 1]
+                i += 2
+            elif arg == "--path" and i + 1 < len(args):
+                path = args[i + 1]
+                i += 2
+            elif arg == "--no-push":
+                no_push = True
+                i += 1
+            else:
+                i += 1
+        
+        result = self.git_commit_handler(path, jira, remark, no_push)
+        await update.message.reply_text(result[:4000])
+
     async def cmd_id(self, update, context) -> None:
         user = update.effective_user
         if update.message and user:
@@ -219,6 +255,7 @@ class TelegramService:
         app.add_handler(CommandHandler("qstatus", self.cmd_qstatus))
         app.add_handler(CommandHandler("qrun", self.cmd_qrun))
         app.add_handler(CommandHandler("qlater", self.cmd_qlater))
+        app.add_handler(CommandHandler("gitcommit", self.cmd_gitcommit))
         app.add_handler(CommandHandler("custom", self.cmd_custom))
         app.add_handler(CommandHandler("id", self.cmd_id))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))

@@ -15,6 +15,7 @@ Usage:
     ayazdy qlater
     ayazdy stats
     ayazdy self-check
+    ayazdy gitcommit [--path /repo] [--jira ABC-123] [--remark "note"] [--no-push]
 """
 
 import argparse
@@ -42,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("qstatus",   help="Queue / later / completed status")
     sub.add_parser("qrun",      help="Process all tasks in queue/")
     sub.add_parser("qlater",    help="Promote later/ tasks into queue/")
+
+    git = sub.add_parser("gitcommit", help="Auto-commit Git changes")
+    git.add_argument("--path", default=None, help="Repository path (default: current dir)")
+    git.add_argument("--jira", default=None, help="Jira ticket (e.g., ABC-123)")
+    git.add_argument("--remark", default=None, help="Developer remark")
+    git.add_argument("--no-push", action="store_true", help="Commit only, don't push")
 
     sel = sub.add_parser("select", help="Select a project")
     sel.add_argument("project")
@@ -91,6 +98,7 @@ def main() -> None:
         case "qlater":     commands.cmd_queue_promote(client, raw)
         case "stats":      commands.cmd_stats(client, raw)
         case "self-check": commands.cmd_self_check(client, raw)
+        case "gitcommit":  commands.cmd_gitcommit(args.path, args.jira, args.remark, args.no_push, raw)
         case _:
             parser.print_help()
             sys.exit(1)
