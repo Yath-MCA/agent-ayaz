@@ -49,7 +49,7 @@ echo.
 
 :: Build Main Server EXE
 echo [4/7] Building main server executable...
-pyinstaller --clean ^
+python -m PyInstaller --clean ^
     --onefile ^
     --name AyazDy-Server ^
     --icon=NONE ^
@@ -76,7 +76,7 @@ echo.
 
 :: Build Git GUI EXE
 echo [5/7] Building Git GUI executable...
-pyinstaller --clean ^
+python -m PyInstaller --clean ^
     --onefile ^
     --noconsole ^
     --name AyazGitDy-GUI ^
@@ -98,7 +98,7 @@ echo.
 
 :: Build Git CLI EXE
 echo [6/7] Building Git CLI executable...
-pyinstaller --clean ^
+python -m PyInstaller --clean ^
     --onefile ^
     --name AyazGitDy-CLI ^
     --icon=NONE ^

@@ -30,7 +30,7 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-*.spec
+# *.spec  <- Commented out - we want to track our .spec files
 
 # Installer logs
 pip-log.txt
@@ -163,6 +163,8 @@ build-exe/
 # PyInstaller
 *.manifest
 *.spec~
+# Keep .spec files for build configuration
+# *.spec is commented out so they are tracked
 
 # Spyder project settings
 .spyderproject
