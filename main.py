@@ -350,6 +350,7 @@ async def websocket_chat(websocket: WebSocket):
     except WebSocketDisconnect:
         return
 
+
 @app.post("/run-task", response_model=AgentResponse)
 async def run_task(body: PromptRequest, request: Request, x_api_key: str = Header(None)):
     require_protected_access(request, x_api_key, "/run-task")
