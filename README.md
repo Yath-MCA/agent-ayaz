@@ -916,6 +916,98 @@ cloudflared tunnel --url http://localhost:8000
 
 ---
 
+## 🆚 Agent Ayazdy vs Copilot-Ralph
+
+[copilot-ralph](https://github.com/ashiqsultan/copilot-ralph) is a desktop application that uses GitHub Copilot CLI to build projects task by task. Here is a comparison:
+
+| Feature | Agent Ayazdy | Copilot-Ralph |
+|---|---|---|
+| **Platform** | Python REST API server (FastAPI) | Electron desktop app (React + Vite) |
+| **LLM providers** | Ollama, OpenAI, OpenRouter, LM Studio, **GitHub Copilot CLI** | GitHub Copilot CLI only |
+| **Per-task git commit** | ✅ Optional (`auto_git_commit=true` or `AUTO_GIT_COMMIT=true`) | ✅ Always on |
+| **Git diff view** | ✅ `GET /project/git-diff` endpoint | ✅ Built-in UI panel |
+| **Context isolation** | Memory-augmented prompts (default); Copilot CLI provider uses fresh context per call | Each task call is isolated (no context rot) |
+| **Approval workflow** | ✅ Token-based (approve/reject before execution) | ❌ Not present |
+| **Risk scoring** | ✅ 1-10 scale with SAFE/CONTROLLED/AUTONOMOUS modes | ❌ Not present |
+| **RBAC** | ✅ Admin/Operator/Viewer roles | ❌ Not present |
+| **Audit log** | ✅ Immutable JSONL audit trail | ❌ Not present |
+| **Plugin system** | ✅ 4 lifecycle hooks | ❌ Not present |
+| **Telegram bot** | ✅ 15+ commands | ❌ Not present |
+| **Web dashboard** | ✅ Real-time React dashboard | ✅ Electron UI |
+| **Task queue** | ✅ File-based queue/completed/later | Plain JSON files |
+| **Storage** | SQLite memory + JSONL audit | Plain JSON + txt files |
+| **Plan mode** | ✅ Planner agent generates structured plan | ✅ Optional plan mode |
+| **Retry on failure** | ✅ Auto-retry in AUTONOMOUS mode | ❌ Not present |
+
+### Features Added Inspired by Copilot-Ralph
+
+The following features were added to agent-ayaz based on the copilot-ralph comparison:
+
+#### 1. GitHub Copilot CLI as LLM Provider
+
+GitHub Copilot CLI (`gh copilot suggest`) is now supported as a fallback LLM provider. It auto-detects if `gh` CLI is installed and authenticated.
+
+**Priority order:** Ollama → OpenAI → OpenRouter → LM Studio → **GitHub Copilot CLI** → Mock
+
+Each `gh copilot suggest` call is isolated (fresh context, no accumulated history) — the same approach copilot-ralph uses to prevent LLM context rot.
+
+**Requirement:** Install [GitHub CLI](https://cli.github.com/) and authenticate with `gh auth login`.
+
+#### 2. Auto Git-Commit After Task Execution
+
+After each successful task execution, agent-ayaz can automatically commit all project changes with a semantic commit message — the same model used by copilot-ralph's per-task commits.
+
+**Enable globally** in `.env`:
+```env
+AUTO_GIT_COMMIT=true
+```
+
+**Enable per-request** in the request body:
+```json
+{ "task": "build.ps1", "auto_git_commit": true }
+```
+
+The response includes a `git_commit` field with the result:
+```json
+{
+  "task": "build.ps1",
+  "exit_code": 0,
+  "git_commit": {
+    "success": true,
+    "commit_hash": "abc1234",
+    "branch": "main"
+  }
+}
+```
+
+#### 3. Git Diff View
+
+New endpoint `GET /project/git-diff` returns the full git diff and status for a project — like copilot-ralph's per-task diff panel.
+
+```bash
+curl -H "X-Api-Key: $KEY" "http://localhost:8000/project/git-diff?project=my-project"
+```
+
+Response:
+```json
+{
+  "project": "my-project",
+  "branch": "main",
+  "staged": false,
+  "status": { "modified": ["app.py"], "added": [], "deleted": [], "total": 1 },
+  "diff_stat": " app.py | 5 +++++\n 1 file changed, 5 insertions(+)",
+  "diff": "diff --git a/app.py b/app.py\n..."
+}
+```
+
+Use `?staged=true` to view staged changes instead.
+
+#### 4. `/project/run-custom` Route Registration
+
+The `/project/run-custom` endpoint was previously defined as a function but never registered as a route. It is now properly exposed as `POST /project/run-custom`, also supporting `auto_git_commit`.
+
+---
+
 ## 📚 Further Reading
 
 - **Dashboard Guide:** `dashboard/README.md`

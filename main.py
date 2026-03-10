@@ -32,6 +32,7 @@ from agents.replay import replay_execution
 from agents.nodes import node_registry
 from plugins import plugin_manager
 from security.rbac import get_role, require_role
+from tools.git_service import GitService
 
 # ─────────────────────────────────────────────
 # Load Environment
@@ -94,11 +95,13 @@ class ProjectTaskRequest(BaseModel):
     dry_run: bool = False
     auto_approve: Optional[bool] = None
     delay_seconds: Optional[int] = Field(default=None, ge=0)
+    auto_git_commit: Optional[bool] = Field(default=None, description="Auto-commit project changes after successful execution (like copilot-ralph per-task commits)")
 
 
 class ProjectRunAllTasksRequest(BaseModel):
     project: Optional[str] = Field(default=None, examples=["my-project"])
     dry_run: bool = False
+    auto_git_commit: Optional[bool] = Field(default=None, description="Auto-commit project changes after each successful task execution")
 
 
 class ProjectCustomCommandRequest(BaseModel):
@@ -107,6 +110,7 @@ class ProjectCustomCommandRequest(BaseModel):
     dry_run: bool = False
     auto_approve: Optional[bool] = None
     delay_seconds: Optional[int] = Field(default=None, ge=0)
+    auto_git_commit: Optional[bool] = Field(default=None, description="Auto-commit project changes after successful execution")
 
 # ─────────────────────────────────────────────
 # LLM Call with Auto-Fallback
@@ -198,6 +202,45 @@ def resolve_project_context(project_name: Optional[str], api_key: str) -> tuple[
         fail(400, "PROJECT_NOT_FOUND", "Project not found", "Call /projects and choose a valid project name")
 
     return selected_name, project_path
+
+
+def maybe_git_commit(project_path: Path, task_label: str, do_commit: bool, exit_code: int = 0) -> Optional[dict]:
+    """
+    Auto-commit project changes after task execution (inspired by copilot-ralph).
+
+    Each successful task gets its own commit, preventing context rot and providing
+    a clean audit trail of changes — the same model used by copilot-ralph.
+
+    Args:
+        project_path: Path to the project repository
+        task_label: Short label used in the commit message (task name or command)
+        do_commit: Whether to actually commit
+        exit_code: Task exit code — commit is skipped when non-zero (task failed)
+
+    Returns:
+        Dict with commit result info, or None if skipped
+    """
+    if not do_commit or exit_code != 0:
+        return None
+    try:
+        git = GitService(repo_path=str(project_path))
+        is_valid, err = git.validate_repository()
+        if not is_valid:
+            return {"skipped": True, "reason": err}
+
+        status = git.get_status()
+        if status["total"] == 0:
+            return {"skipped": True, "reason": "no changes to commit"}
+
+        diff = git.get_diff()
+        commit_type = git.detect_commit_type(status, diff)
+        summary = git.generate_commit_summary(status, git.get_diff_stat())
+        message = git.format_commit_message(commit_type, summary, status, remark=f"task: {task_label}")
+        result = git.commit_and_push(message, push=False)
+        return result
+    except Exception as exc:
+        log.warning("Auto git-commit failed: %s", exc)
+        return {"skipped": True, "reason": str(exc)}
 
 # ─────────────────────────────────────────────
 # Agent Core
@@ -529,7 +572,11 @@ async def run_project_task(body: ProjectTaskRequest, request: Request, x_api_key
             "duration_ms": execution.duration_ms,
         }
     )
-    return {
+
+    do_commit = body.auto_git_commit if body.auto_git_commit is not None else settings.auto_git_commit_on_task
+    git_commit = maybe_git_commit(project_path, task_file.name, do_commit, execution.exit_code)
+
+    response = {
         "project": selected_name,
         "task": task_file.name,
         "output": execution.output,
@@ -539,6 +586,9 @@ async def run_project_task(body: ProjectTaskRequest, request: Request, x_api_key
         "auto_approve": auto_approve,
         "delay_seconds": delay_seconds,
     }
+    if git_commit is not None:
+        response["git_commit"] = git_commit
+    return response
 
 
 @app.post("/project/run-all-tasks")
@@ -590,17 +640,25 @@ async def run_all_project_tasks(body: ProjectRunAllTasksRequest, request: Reques
             "exit_code": execution.exit_code,
             "duration_ms": execution.duration_ms,
         })
-        results.append({
+
+        do_commit = body.auto_git_commit if body.auto_git_commit is not None else settings.auto_git_commit_on_task
+        git_commit = maybe_git_commit(project_path, item["name"], do_commit, execution.exit_code)
+
+        task_result = {
             "task": item["name"],
             "output": execution.output,
             "exit_code": execution.exit_code,
             "started_at": execution.started_at,
             "duration_ms": execution.duration_ms,
-        })
+        }
+        if git_commit is not None:
+            task_result["git_commit"] = git_commit
+        results.append(task_result)
 
     return {"project": selected_name, "results": results, "count": len(results)}
 
 
+@app.post("/project/run-custom")
 async def run_project_custom(body: ProjectCustomCommandRequest, request: Request, x_api_key: str = Header(None)):
     api_key = require_protected_access(request, x_api_key, "/project/run-custom")
 
@@ -642,7 +700,11 @@ async def run_project_custom(body: ProjectCustomCommandRequest, request: Request
             "duration_ms": execution.duration_ms,
         }
     )
-    return {
+
+    do_commit = body.auto_git_commit if body.auto_git_commit is not None else settings.auto_git_commit_on_task
+    git_commit = maybe_git_commit(project_path, body.command, do_commit, execution.exit_code)
+
+    response = {
         "project": selected_name,
         "command": body.command,
         "output": execution.output,
@@ -651,6 +713,49 @@ async def run_project_custom(body: ProjectCustomCommandRequest, request: Request
         "duration_ms": execution.duration_ms,
         "auto_approve": auto_approve,
         "delay_seconds": delay_seconds,
+    }
+    if git_commit is not None:
+        response["git_commit"] = git_commit
+    return response
+
+
+@app.get("/project/git-diff")
+async def get_project_git_diff(
+    request: Request,
+    project: Optional[str] = None,
+    staged: bool = False,
+    x_api_key: str = Header(None),
+):
+    """
+    Get git diff for the selected project.
+
+    Returns the full diff and diff statistics, enabling a git-diff view
+    similar to copilot-ralph's per-task change viewer.
+
+    Query params:
+        project: Project name (optional, uses selected project if omitted)
+        staged:  If true, returns staged diff; otherwise unstaged diff
+    """
+    api_key = require_protected_access(request, x_api_key, "/project/git-diff")
+    selected_name, project_path = resolve_project_context(project, api_key)
+
+    git = GitService(repo_path=str(project_path))
+    is_valid, err = git.validate_repository()
+    if not is_valid:
+        fail(400, "NOT_A_GIT_REPO", err, "Ensure the project directory is a git repository")
+
+    status = git.get_status()
+    diff_stat = git.get_diff_stat()
+    diff = git.get_diff(staged=staged)
+    branch = git.get_current_branch()
+
+    return {
+        "project": selected_name,
+        "branch": branch,
+        "staged": staged,
+        "status": status,
+        "diff_stat": diff_stat,
+        "diff": diff,
     }
 
 # ─────────────────────────────────────────────
