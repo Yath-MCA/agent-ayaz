@@ -172,8 +172,12 @@ def cmd_gitcommit(path: Optional[str], jira: Optional[str], remark: Optional[str
     """Run standalone Git commit automation."""
     import sys
     import subprocess
+    from pathlib import Path
     
-    args = ["python", "tools/ayazgitdy.py"]
+    root_dir = Path(__file__).resolve().parents[1]
+    script_path = root_dir / "tools" / "ayazgitdy.py"
+
+    args = [sys.executable, str(script_path)]
     
     if path:
         args.extend(["--path", path])
@@ -184,7 +188,7 @@ def cmd_gitcommit(path: Optional[str], jira: Optional[str], remark: Optional[str
     if no_push:
         args.append("--no-push")
     
-    # Run standalone script directly
+    # Run standalone script with the current interpreter for portability.
     result = subprocess.run(args, capture_output=False, text=True)
     sys.exit(result.returncode)
 

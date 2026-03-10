@@ -24,7 +24,11 @@ class AgentClient:
             r.raise_for_status()
             return r.json()
         except requests.HTTPError as e:
-            return {"error": True, "status_code": e.response.status_code, "detail": e.response.json()}
+            return {
+                "error": True,
+                "status_code": e.response.status_code if e.response is not None else None,
+                "detail": self._http_error_detail(e),
+            }
         except requests.RequestException as e:
             return {"error": True, "detail": str(e)}
 
@@ -35,9 +39,23 @@ class AgentClient:
             r.raise_for_status()
             return r.json()
         except requests.HTTPError as e:
-            return {"error": True, "status_code": e.response.status_code, "detail": e.response.json()}
+            return {
+                "error": True,
+                "status_code": e.response.status_code if e.response is not None else None,
+                "detail": self._http_error_detail(e),
+            }
         except requests.RequestException as e:
             return {"error": True, "detail": str(e)}
+
+    def _http_error_detail(self, error: requests.HTTPError) -> Any:
+        """Return JSON error payload when available, otherwise a readable text fallback."""
+        response = error.response
+        if response is None:
+            return str(error)
+        try:
+            return response.json()
+        except ValueError:
+            return response.text or str(error)
 
     def health(self) -> dict:        return self._get("/health")
     def monitor_health(self) -> dict: return self._get("/monitor/health")
