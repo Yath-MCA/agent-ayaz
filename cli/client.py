@@ -1,8 +1,7 @@
 """API client for Agent Ayazdy REST endpoints."""
 
-import json
 import os
-from typing import Any, Generator, Optional
+from typing import Any, Optional
 
 import requests
 
@@ -14,11 +13,6 @@ class AgentClient:
     def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None) -> None:
         self.base_url = (base_url or os.getenv("AYAZDY_URL", DEFAULT_BASE_URL)).rstrip("/")
         self.api_key = api_key or os.getenv("API_SECRET_KEY") or os.getenv("AYAZDY_API_KEY", "")
-
-    @property
-    def ws_url(self) -> str:
-        """Return the WebSocket base URL (ws:// or wss://)."""
-        return self.base_url.replace("https://", "wss://").replace("http://", "ws://")
 
     def _headers(self) -> dict:
         return {"X-Api-Key": self.api_key, "Content-Type": "application/json"}
