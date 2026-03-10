@@ -71,7 +71,7 @@ class TelegramService:
             "Available commands:\n"
             "/help - show command list\n"
             "/status - show runtime status\n"
-            "/projects - list projects under PROJECT_ROOT\n"
+            "/projects - list projects under configured PROJECT_ROOT/PROJECT_ROOTS\n"
             "/project <name> - select project, open in VS Code, show run-task files\n"
             "/current - show currently selected project\n"
             "/tasks - list available files in selected project run-task folder\n"

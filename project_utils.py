@@ -3,12 +3,53 @@ import os
 import json
 
 PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", "D:/PERSONAL/LIVE_PROJECTS"))
+OFFICIAL_PROJECTS_DIR = {"C:\\_IMPACT\\tomcat\\webapps\\"}
+
+
 ALLOWED_TASK_SUFFIXES = {".ps1", ".bat", ".cmd", ".py", ".sh"}
 
-def list_projects():
-    if not PROJECT_ROOT.exists():
+
+def _extra_project_roots_from_env() -> list[Path]:
+    raw = os.getenv("PROJECT_ROOTS", "")
+    if not raw.strip():
         return []
-    return [p.name for p in PROJECT_ROOT.iterdir() if p.is_dir()]
+
+    # Support both Windows ';' and comma separated lists.
+    normalized = raw.replace(",", ";")
+    items = [item.strip() for item in normalized.split(";") if item.strip()]
+    return [Path(item) for item in items]
+
+
+def get_project_roots() -> list[Path]:
+    roots = [PROJECT_ROOT, *_extra_project_roots_from_env(), *(Path(p) for p in OFFICIAL_PROJECTS_DIR)]
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(root)
+    return deduped
+
+
+def list_projects():
+    names: list[str] = []
+    seen: set[str] = set()
+
+    for root in get_project_roots():
+        if not root.exists() or not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            lowered = entry.name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            names.append(entry.name)
+
+    return sorted(names)
 
 
 def get_project_path(project_name: str) -> Path | None:
@@ -18,16 +59,20 @@ def get_project_path(project_name: str) -> Path | None:
     if any(sep in project_name for sep in ("/", "\\")) or ".." in project_name:
         return None
 
-    root = PROJECT_ROOT.resolve()
-    project_path = (PROJECT_ROOT / project_name).resolve()
+    for root in get_project_roots():
+        if not root.exists() or not root.is_dir():
+            continue
 
-    if project_path.parent != root:
-        return None
+        resolved_root = root.resolve()
+        project_path = (resolved_root / project_name).resolve()
 
-    if not project_path.exists() or not project_path.is_dir():
-        return None
+        if project_path.parent != resolved_root:
+            continue
 
-    return project_path
+        if project_path.exists() and project_path.is_dir():
+            return project_path
+
+    return None
 
 
 def get_run_task_dir(project_path: Path) -> Path:

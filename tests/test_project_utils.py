@@ -10,10 +10,30 @@ def test_get_project_path_and_list_projects(tmp_path, monkeypatch):
     (project_root / "b").mkdir()
 
     monkeypatch.setattr(project_utils, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(project_utils, "OFFICIAL_PROJECTS_DIR", set())
+    monkeypatch.delenv("PROJECT_ROOTS", raising=False)
 
     assert sorted(project_utils.list_projects()) == ["a", "b"]
     assert project_utils.get_project_path("a") == project_root / "a"
     assert project_utils.get_project_path("../x") is None
+
+
+def test_list_projects_and_lookup_across_multiple_roots(tmp_path, monkeypatch):
+    root_primary = tmp_path / "primary"
+    root_secondary = tmp_path / "secondary"
+    root_primary.mkdir()
+    root_secondary.mkdir()
+
+    (root_primary / "app_a").mkdir()
+    (root_secondary / "app_b").mkdir()
+
+    monkeypatch.setattr(project_utils, "PROJECT_ROOT", root_primary)
+    monkeypatch.setattr(project_utils, "OFFICIAL_PROJECTS_DIR", set())
+    monkeypatch.setenv("PROJECT_ROOTS", str(root_secondary))
+
+    assert sorted(project_utils.list_projects()) == ["app_a", "app_b"]
+    assert project_utils.get_project_path("app_a") == (root_primary / "app_a").resolve()
+    assert project_utils.get_project_path("app_b") == (root_secondary / "app_b").resolve()
 
 
 def test_run_task_catalog_with_metadata(tmp_path):

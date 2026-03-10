@@ -416,23 +416,34 @@ class LLMProviderService:
         Requires: gh CLI installed and authenticated (`gh auth login`).
         """
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    ["gh", "copilot", "suggest", "-t", "shell", prompt],
+            def _run(args: list[str]) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    args,
                     capture_output=True,
                     text=True,
                     timeout=config.timeout,
-                ),
-            )            
+                )
+
+            # Current gh CLI Copilot syntax.
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _run(["gh", "copilot", "-p", prompt]),
+            )
+
+            # Backward-compatible fallback for older copilot-cli variants.
+            if result.returncode != 0 and "unknown option '-t'" in (result.stderr or ""):
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _run(["gh", "copilot", "suggest", prompt]),
+                )
+
             if result.returncode == 0 and result.stdout.strip():
                 output = result.stdout.strip()
-                # Extract suggestion lines (skip blank lines from gh copilot output)
                 lines = [line for line in output.splitlines() if line.strip()]
                 return "\n".join(lines)
-            
-            stderr = result.stderr.strip()
-            raise RuntimeError(f"gh copilot suggest failed (exit {result.returncode}): {stderr}")
+
+            stderr = (result.stderr or "").strip()
+            raise RuntimeError(f"gh copilot failed (exit {result.returncode}): {stderr}")
         
         except FileNotFoundError:
             raise RuntimeError("gh CLI not found. Install from https://cli.github.com/")

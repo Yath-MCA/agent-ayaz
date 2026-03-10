@@ -25,7 +25,7 @@ def _print(data: Any, raw: bool = False) -> None:
 
 
 def cmd_health(client: AgentClient, raw: bool) -> None:
-    _print(client.monitor_health(), raw)
+    _print(client.health(), raw)
 
 
 def cmd_status(client: AgentClient, raw: bool) -> None:
@@ -45,12 +45,21 @@ def cmd_projects(client: AgentClient, raw: bool) -> None:
 
 def cmd_select(client: AgentClient, project: str, raw: bool) -> None:
     data = client.select(project)
+    if not raw and data.get("error") and data.get("status_code") == 409:
+        detail = data.get("detail", {})
+        info = detail.get("detail") if isinstance(detail, dict) else None
+        if isinstance(info, dict) and info.get("code") == "CONFIRMATION_REQUIRED":
+            print(f"⚠️ {info.get('message', 'Confirmation required')}")
+            ans = input("Continue with project selection? (y/N): ").strip().lower()
+            if ans in {"y", "yes"}:
+                data = client.select(project, confirm_agent_tasks=True)
+
     if not raw and not data.get("error"):
-        tasks = data.get("tasks", [])
-        print(f"✅ Selected: {data.get('project')}  →  {data.get('path')}")
+        run_task_count = data.get("run_task_count", 0)
+        print(f"✅ Selected: {data.get('project')}")
         print(f"   {data.get('open_vscode', '')}")
-        if tasks:
-            print(f"   Tasks: {', '.join(t['name'] for t in tasks)}")
+        if run_task_count:
+            print(f"   run-task files available: {run_task_count}")
         else:
             print("   No run-task files found.")
         return
@@ -61,6 +70,50 @@ def cmd_run(client: AgentClient, task: str, project: Optional[str], dry_run: boo
     data = client.run_task(task, project=project, dry_run=dry_run)
     if not raw and not data.get("error"):
         print(f"{'[DRY-RUN] ' if dry_run else ''}▶ {data.get('task')}  exit={data.get('exit_code')}  {data.get('duration_ms')}ms")
+        if data.get("output"):
+            print(data["output"])
+        return
+    _print(data, raw)
+
+
+def cmd_analyze(client: AgentClient, prompt: str, project: Optional[str], raw: bool) -> None:
+    selected_project = project
+    if not selected_project:
+        current = client.current()
+        selected_project = current.get("project") if isinstance(current, dict) else None
+
+    if not selected_project:
+        if raw:
+            _print({"error": True, "detail": "No project selected. Use select <project> or pass --project."}, raw)
+        else:
+            print("❌ No project selected. Use `select <project>` or pass `--project`.")
+        return
+
+    data = client.analyze(prompt, project=selected_project)
+    if not raw and not data.get("error"):
+        print(f"🧠 Analysis for project: {selected_project}")
+        print(data.get("reply", "(no reply)"))
+        return
+    _print(data, raw)
+
+
+def cmd_exec(client: AgentClient, command: str, project: Optional[str], raw: bool) -> None:
+    selected_project = project
+    if not selected_project:
+        current = client.current()
+        selected_project = current.get("project") if isinstance(current, dict) else None
+
+    if not selected_project:
+        if raw:
+            _print({"error": True, "detail": "No project selected. Use select <project> or pass --project."}, raw)
+        else:
+            print("❌ No project selected. Use `select <project>` or pass `--project`.")
+        return
+
+    data = client.run_custom(command, project=selected_project, auto_approve=True)
+    if not raw and not data.get("error"):
+        print(f"▶ Command in project: {selected_project}")
+        print(f"   exit={data.get('exit_code')}  duration={data.get('duration_ms')}ms")
         if data.get("output"):
             print(data["output"])
         return
@@ -154,6 +207,23 @@ def cmd_queue_promote(client: AgentClient, raw: bool) -> None:
     _print(data, raw)
 
 
+def cmd_queue_run_text(client: AgentClient, include_later: bool, limit: int, raw: bool) -> None:
+    data = client.queue_run_text_prompts(include_later=include_later, limit=limit)
+    if not raw and not data.get("error"):
+        mode = "queue+later" if include_later else "queue"
+        print(f"▶ Processed {data.get('processed', 0)} text prompt file(s) from {mode}")
+        print(f"   GitHub Copilot available: {data.get('copilot_available')}")
+        for item in data.get("results", []):
+            if item.get("status") == "executed":
+                print(f"  ✅ {item.get('file')}  provider={item.get('provider')}  result={item.get('result_file')}")
+            elif item.get("status") == "skipped":
+                print(f"  ⏭ {item.get('file')}  {item.get('reason')}")
+            else:
+                print(f"  ❌ {item.get('file')}  {item.get('error', 'failed')}")
+        return
+    _print(data, raw)
+
+
 def cmd_stats(client: AgentClient, raw: bool) -> None:
     _print(client.stats(), raw)
 
@@ -166,6 +236,25 @@ def cmd_self_check(client: AgentClient, raw: bool) -> None:
             print(f"  {icon} {key}: {val}")
         return
     _print(data, raw)
+
+
+def cmd_desktop(raw: bool) -> None:
+    """Launch the local desktop Git assistant (tkinter GUI)."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root_dir = Path(__file__).resolve().parents[1]
+    script_path = root_dir / "tools" / "ayazgitdy_gui.py"
+    if not script_path.exists():
+        _print({"error": True, "detail": f"Desktop launcher not found: {script_path}"}, raw)
+        return
+
+    subprocess.Popen([sys.executable, str(script_path)])
+    if raw:
+        _print({"status": "ok", "launched": str(script_path)}, raw)
+    else:
+        print("🖥️  Desktop window launched.")
 
 
 def cmd_gitcommit(path: Optional[str], jira: Optional[str], remark: Optional[str], no_push: bool, raw: bool) -> None:

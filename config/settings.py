@@ -10,6 +10,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     project_root: str
+    project_roots: list[str]
     ollama_model: str
     ollama_url: str
     telegram_token: str | None
@@ -28,6 +29,7 @@ class Settings:
     auto_approve_default: bool
     default_execution_delay_seconds: int
     auto_git_commit_on_task: bool
+    auto_open_vscode: bool
 
 
 def get_settings() -> Settings:
@@ -46,14 +48,32 @@ def get_settings() -> Settings:
     )
     allowed_command_prefixes = [prefix.strip().lower() for prefix in allowed_prefixes_raw.split(",") if prefix.strip()]
 
+    telegram_token_raw = os.getenv("TELEGRAM_TOKEN")
+    telegram_token = telegram_token_raw
+    if telegram_token_raw and telegram_token_raw.strip().lower() == "your_bot_token":
+        telegram_token = None
+
+    allowed_user_id_raw = os.getenv("ALLOWED_TELEGRAM_USER_ID", "0")
+    try:
+        allowed_user_id = int((allowed_user_id_raw or "0").strip())
+    except ValueError:
+        allowed_user_id = 0
+
+    project_root = os.getenv("PROJECT_ROOT", "D:/PERSONAL/LIVE_PROJECTS")
+    project_roots_raw = os.getenv("PROJECT_ROOTS", "")
+    project_roots = [item.strip() for item in project_roots_raw.replace(",", ";").split(";") if item.strip()]
+    if project_root and project_root not in project_roots:
+        project_roots.insert(0, project_root)
+
     return Settings(
-        project_root=os.getenv("PROJECT_ROOT", "D:/PERSONAL/LIVE_PROJECTS"),
+        project_root=project_root,
+        project_roots=project_roots,
         ollama_model=os.getenv("OLLAMA_MODEL", "phi3"),
         ollama_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        telegram_token=os.getenv("TELEGRAM_TOKEN"),
+        telegram_token=telegram_token,
         api_secret_key=api_secret_key,
         api_secret_keys=api_secret_keys,
-        allowed_telegram_user_id=int(os.getenv("ALLOWED_TELEGRAM_USER_ID", "0")),
+        allowed_telegram_user_id=allowed_user_id,
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", 8000)),
         cors_origins=cors_origins,
@@ -66,4 +86,5 @@ def get_settings() -> Settings:
         auto_approve_default=os.getenv("AUTO_APPROVE", "true").strip().lower() in {"1", "true", "yes", "on"},
         default_execution_delay_seconds=int(os.getenv("DEFAULT_EXECUTION_DELAY_SECONDS", "0")),
         auto_git_commit_on_task=os.getenv("AUTO_GIT_COMMIT", "false").strip().lower() in {"1", "true", "yes", "on"},
+        auto_open_vscode=os.getenv("AUTO_OPEN_VSCODE", "false").strip().lower() in {"1", "true", "yes", "on"},
     )

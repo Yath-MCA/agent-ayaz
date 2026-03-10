@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -78,6 +79,7 @@ if _dashboard_dir.exists():
 class PromptRequest(BaseModel):
     prompt: str = Field(..., examples=["Summarize release notes"])
     execute_commands: bool = False
+    project: Optional[str] = Field(default=None, examples=["impact_vite"])
 
 
 class AgentResponse(BaseModel):
@@ -87,6 +89,7 @@ class AgentResponse(BaseModel):
 
 class ProjectSelectRequest(BaseModel):
     project: str = Field(..., examples=["my-project"])
+    confirm_agent_tasks: bool = False
 
 
 class ProjectTaskRequest(BaseModel):
@@ -111,6 +114,11 @@ class ProjectCustomCommandRequest(BaseModel):
     auto_approve: Optional[bool] = None
     delay_seconds: Optional[int] = Field(default=None, ge=0)
     auto_git_commit: Optional[bool] = Field(default=None, description="Auto-commit project changes after successful execution")
+
+
+class QueueTextPromptRequest(BaseModel):
+    include_later: bool = False
+    limit: int = Field(default=20, ge=1, le=200)
 
 # ─────────────────────────────────────────────
 # LLM Call with Auto-Fallback
@@ -204,6 +212,24 @@ def resolve_project_context(project_name: Optional[str], api_key: str) -> tuple[
     return selected_name, project_path
 
 
+def detect_pending_agent_text_tasks() -> dict[str, list[str]]:
+    """Find .txt/.md tasks pending in agent-task queue and later folders."""
+    pending = {"queue": [], "later": []}
+    root = Path("agent-task")
+
+    for bucket in ("queue", "later"):
+        folder = root / bucket
+        if not folder.exists() or not folder.is_dir():
+            continue
+        for file in sorted(folder.iterdir(), key=lambda p: p.name.lower()):
+            if not file.is_file():
+                continue
+            if file.suffix.lower() in {".txt", ".md"}:
+                pending[bucket].append(file.name)
+
+    return pending
+
+
 def maybe_git_commit(project_path: Path, task_label: str, do_commit: bool, exit_code: int = 0) -> Optional[dict]:
     """
     Auto-commit project changes after task execution (inspired by copilot-ralph).
@@ -245,17 +271,45 @@ def maybe_git_commit(project_path: Path, task_label: str, do_commit: bool, exit_
 # ─────────────────────────────────────────────
 # Agent Core
 # ─────────────────────────────────────────────
-async def run_agent(prompt: str, execute: bool, user: str = "api"):
+async def _get_project_precheck(project: Optional[str]) -> dict:
+    project_path = get_project_path(project) if project else None
+    agent_tasks_available = bool(project_path and get_run_task_catalog(project_path))
+    pending_agent_tasks = detect_pending_agent_text_tasks()
+    has_pending_md_txt = bool(pending_agent_tasks["queue"] or pending_agent_tasks["later"])
+
+    llm_service = get_llm_service()
+    copilot_available = await llm_service.check_provider_health(LLMProvider.GITHUB_COPILOT)
+
+    return {
+        "agent_tasks_available": agent_tasks_available,
+        "has_pending_md_txt": has_pending_md_txt,
+        "pending_agent_tasks": pending_agent_tasks,
+        "copilot_available": copilot_available,
+        "prefer_copilot": bool(project and agent_tasks_available and has_pending_md_txt and copilot_available),
+    }
+
+
+async def run_agent(prompt: str, execute: bool, user: str = "api", project: Optional[str] = None):
     mode = current_mode()
 
+    precheck = await _get_project_precheck(project)
+
+    llm_service = get_llm_service()
+
+    async def llm_call(prompt_text: str) -> str:
+        # If agent-task checks pass and Copilot access exists, run Copilot first.
+        if precheck["prefer_copilot"]:
+            return await llm_service.call_llm(prompt_text, provider=LLMProvider.GITHUB_COPILOT)
+        return await llm_service.call_llm(prompt_text)
+
     # Phase 9: optimizer injects memory context into prompt
-    enriched_prompt = build_optimized_prompt(prompt, project=None)
+    enriched_prompt = build_optimized_prompt(prompt, project=project)
 
     # Phase 11: before_plan hook
-    plugin_manager.fire("before_plan", prompt=prompt, project=None)
+    plugin_manager.fire("before_plan", prompt=prompt, project=project)
 
     # Planner → structured JSON plan
-    exec_plan = await planner_agent.plan(enriched_prompt, call_ollama)
+    exec_plan = await planner_agent.plan(enriched_prompt, llm_call)
 
     # Phase 7: risk scoring
     risk = score_plan(exec_plan.command, exec_plan.project, exec_plan.type, exec_plan.auto_approve)
@@ -371,7 +425,7 @@ async def llm_providers():
 
 @app.post("/chat", response_model=AgentResponse)
 async def chat(body: PromptRequest):
-    return await run_agent(body.prompt, execute=False)
+    return await run_agent(body.prompt, execute=False, project=body.project)
 
 
 @app.websocket("/ws/chat")
@@ -397,7 +451,7 @@ async def websocket_chat(websocket: WebSocket):
 @app.post("/run-task", response_model=AgentResponse)
 async def run_task(body: PromptRequest, request: Request, x_api_key: str = Header(None)):
     require_protected_access(request, x_api_key, "/run-task")
-    return await run_agent(body.prompt, execute=body.execute_commands)
+    return await run_agent(body.prompt, execute=body.execute_commands, project=body.project)
 
 # ─────────────────────────────────────────────
 # Project Execution
@@ -439,6 +493,8 @@ async def run_project(project: str, command: str, request: Request, x_api_key: s
 
 
 def try_open_in_vscode(project_path: str) -> tuple[bool, str]:
+    if not settings.auto_open_vscode:
+        return False, "Skipping VS Code auto-open (AUTO_OPEN_VSCODE=false)."
     try:
         subprocess.Popen(["code", project_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True, "Opened in VS Code."
@@ -465,6 +521,19 @@ async def select_project(body: ProjectSelectRequest, request: Request, x_api_key
     if not project_path:
         fail(400, "PROJECT_NOT_FOUND", "Project not found", "Call /projects and choose a valid project name")
 
+    pending_agent_tasks = detect_pending_agent_text_tasks()
+    has_pending_agent_tasks = bool(pending_agent_tasks["queue"] or pending_agent_tasks["later"])
+    agent_tasks_available = bool(get_run_task_catalog(project_path))
+    llm_service = get_llm_service()
+    github_copilot_available = await llm_service.check_provider_health(LLMProvider.GITHUB_COPILOT)
+    if has_pending_agent_tasks and not body.confirm_agent_tasks:
+        fail(
+            409,
+            "CONFIRMATION_REQUIRED",
+            "Pending .txt/.md files found in agent-task queue/later.",
+            "Resend /project/select with confirm_agent_tasks=true after manual confirmation.",
+        )
+
     _, open_message = try_open_in_vscode(str(project_path))
     ensure_run_task_dir(project_path)
     tasks = get_run_task_catalog(project_path)
@@ -477,10 +546,89 @@ async def select_project(body: ProjectSelectRequest, request: Request, x_api_key
 
     return {
         "project": body.project,
-        "path": str(project_path),
+        "run_task_count": len(tasks),
         "open_vscode": open_message,
-        "tasks": tasks,
+        "agent_task_confirmation": {
+            "required": has_pending_agent_tasks,
+            "queue_md_txt": pending_agent_tasks["queue"],
+            "later_md_txt": pending_agent_tasks["later"],
+        },
+        "project_checks": {
+            "agent_tasks_available": agent_tasks_available,
+            "queue_or_later_md_txt_found": has_pending_agent_tasks,
+            "github_copilot_available": github_copilot_available,
+            "run_github_copilot_first": bool(agent_tasks_available and has_pending_agent_tasks and github_copilot_available),
+        },
         "message": message,
+    }
+
+
+def _move_task_file_to_completed(source_file: Path) -> Path:
+    completed_dir = Path("agent-task") / "completed"
+    completed_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = completed_dir / source_file.name
+    if dest.exists():
+        dest = completed_dir / f"{source_file.stem}_{int(time.time())}{source_file.suffix}"
+
+    shutil.move(str(source_file), str(dest))
+    return dest
+
+
+@app.post("/queue/run-text-prompts")
+async def run_text_prompts(body: QueueTextPromptRequest, request: Request, x_api_key: str = Header(None)):
+    require_protected_access(request, x_api_key, "/queue/run-text-prompts")
+
+    queue_root = Path("agent-task")
+    queue_dir = queue_root / "queue"
+    later_dir = queue_root / "later"
+    candidates: list[Path] = []
+
+    if queue_dir.exists():
+        candidates.extend([f for f in sorted(queue_dir.iterdir(), key=lambda p: p.name.lower()) if f.is_file()])
+    if body.include_later and later_dir.exists():
+        candidates.extend([f for f in sorted(later_dir.iterdir(), key=lambda p: p.name.lower()) if f.is_file()])
+
+    prompt_files = [f for f in candidates if f.suffix.lower() in {".txt", ".md"}][: body.limit]
+    llm_service = get_llm_service()
+    copilot_available = await llm_service.check_provider_health(LLMProvider.GITHUB_COPILOT)
+
+    results = []
+    for f in prompt_files:
+        prompt_text = f.read_text(encoding="utf-8", errors="ignore").strip()
+        if not prompt_text:
+            _move_task_file_to_completed(f)
+            results.append({"file": f.name, "status": "skipped", "reason": "empty prompt"})
+            continue
+
+        try:
+            if copilot_available:
+                answer = await llm_service.call_llm(prompt_text, provider=LLMProvider.GITHUB_COPILOT)
+                provider_used = "github_copilot"
+            else:
+                answer = await llm_service.call_llm(prompt_text)
+                provider_used = str(await llm_service.get_available_provider() or "unknown")
+
+            completed_file = _move_task_file_to_completed(f)
+            result_file = completed_file.with_suffix(completed_file.suffix + ".result.txt")
+            result_file.write_text(answer or "", encoding="utf-8")
+
+            results.append(
+                {
+                    "file": f.name,
+                    "status": "executed",
+                    "provider": provider_used,
+                    "result_file": result_file.name,
+                }
+            )
+        except Exception as exc:
+            results.append({"file": f.name, "status": "failed", "error": str(exc)})
+
+    return {
+        "processed": len(results),
+        "copilot_available": copilot_available,
+        "results": results,
+        "message": "Processed text/markdown prompts from queue/later using GitHub Copilot first when available.",
     }
 
 
@@ -489,17 +637,16 @@ async def get_current_project(request: Request, x_api_key: str = Header(None)):
     api_key = require_protected_access(request, x_api_key, "/project/current")
     selected_name = app.state.selected_projects.get(api_key)
     if not selected_name:
-        return {"project": None, "path": None, "tasks": []}
+        return {"project": None, "run_task_count": 0}
 
     project_path = get_project_path(selected_name)
     if not project_path:
         app.state.selected_projects.pop(api_key, None)
-        return {"project": None, "path": None, "tasks": []}
+        return {"project": None, "run_task_count": 0}
 
     return {
         "project": selected_name,
-        "path": str(project_path),
-        "tasks": get_run_task_catalog(project_path),
+        "run_task_count": len(get_run_task_catalog(project_path)),
     }
 
 
@@ -511,7 +658,6 @@ async def get_project_tasks(request: Request, project: Optional[str] = None, x_a
     tasks = get_run_task_catalog(project_path)
     return {
         "project": selected_name,
-        "path": str(project_path),
         "tasks": tasks,
         "count": len(tasks),
     }
@@ -781,6 +927,31 @@ async def monitor_health(request: Request, x_api_key: str = Header(None)):
     }
 
 
+@app.get("/monitor/telegram-config")
+async def monitor_telegram_config(request: Request, x_api_key: str = Header(None)):
+    """Expose Telegram readiness so dashboard can explain why bot is not responding."""
+    require_protected_access(request, x_api_key, "/monitor/telegram-config")
+
+    token_configured = bool(settings.telegram_token)
+    allowed_user_id_valid = settings.allowed_telegram_user_id > 0
+    can_start = token_configured and allowed_user_id_valid
+
+    hints = []
+    if not token_configured:
+        hints.append("Set TELEGRAM_TOKEN in .env to a real bot token.")
+    if not allowed_user_id_valid:
+        hints.append("Set ALLOWED_TELEGRAM_USER_ID in .env to a numeric Telegram user id.")
+
+    return {
+        "configured": can_start,
+        "telegram_started": app.state.telegram_started,
+        "token_configured": token_configured,
+        "allowed_user_id_valid": allowed_user_id_valid,
+        "allowed_user_id": settings.allowed_telegram_user_id,
+        "hints": hints,
+    }
+
+
 @app.get("/monitor/logs")
 async def monitor_logs(request: Request, limit: int = 50, x_api_key: str = Header(None)):
     require_protected_access(request, x_api_key, "/monitor/logs")
@@ -827,9 +998,9 @@ async def reject_task(token: str, request: Request, x_api_key: str = Header(None
 # Phase 6 — SSE Streaming, Stats, Self-check, Timeline
 # ─────────────────────────────────────────────
 @app.get("/monitor/stream/logs")
-async def stream_logs(request: Request, x_api_key: str = Header(None)):
+async def stream_logs(request: Request, x_api_key: str = Header(None), api_key: Optional[str] = None):
     """Server-Sent Events: streams new audit log entries as they arrive."""
-    require_protected_access(request, x_api_key, "/monitor/stream/logs")
+    require_protected_access(request, x_api_key or api_key, "/monitor/stream/logs")
 
     async def event_generator():
         seen = 0
@@ -1055,7 +1226,7 @@ def build_telegram():
     def handle_projects() -> str:
         projects = list_projects()
         if not projects:
-            return "No projects found under PROJECT_ROOT."
+            return "No projects found under configured PROJECT_ROOT/PROJECT_ROOTS."
         return (
             "📂 Projects:\n"
             + "\n".join(f"- {name}" for name in projects[:100])
@@ -1074,19 +1245,14 @@ def build_telegram():
         tasks = get_run_task_catalog(project_path)
 
         if tasks:
-            tasks_message = "\n".join(
-                f"- {item['name']}{' — ' + item['description'] if item.get('description') else ''}" for item in tasks[:40]
-            )
             return (
                 f"✅ Selected project: {project_name}\n"
-                f"📁 Path: {project_path}\n"
-                f"🧩 run-task files:\n{tasks_message}\n\n"
+                f"🧩 run-task files available: {len(tasks)}\n\n"
                 f"Use /task <file_name> to run one. {open_message}"
             )
 
         return (
             f"✅ Selected project: {project_name}\n"
-            f"📁 Path: {project_path}\n"
             "ℹ️ No run-task files found in run-task/.\n"
             f"Use /custom <command> to run a custom task in this project. {open_message}"
         )
@@ -1113,7 +1279,7 @@ def build_telegram():
     def handle_current_project() -> str:
         if not selected_project.get("path"):
             return "ℹ️ No project selected. Use /projects then /project <name>."
-        return f"📌 Current project: {selected_project['name']}\n📁 Path: {selected_project['path']}"
+        return f"📌 Current project: {selected_project['name']}"
 
     def handle_run_task(task_name: str) -> str:
         if not selected_project.get("path"):
@@ -1184,12 +1350,13 @@ def build_telegram():
         )
 
     def handle_status() -> str:
+        roots_text = ", ".join(settings.project_roots) if settings.project_roots else settings.project_root
         return (
             "✅ Runtime Status\n"
             f"Model: {settings.ollama_model}\n"
             f"Ollama URL: {settings.ollama_url}\n"
             f"Host/Port: {settings.host}:{settings.port}\n"
-            f"PROJECT_ROOT: {settings.project_root}"
+            f"PROJECT_ROOTS: {roots_text}"
         )
 
     async def handle_run_all_tasks() -> str:

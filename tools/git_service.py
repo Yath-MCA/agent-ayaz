@@ -83,7 +83,9 @@ class GitService:
                 continue
             
             status_code = line[:2]
-            filename = line[3:]
+            filename = line[3:].strip()
+            if not filename:
+                continue
             
             if status_code[0] in ["M", "A", "D", "R", "C"]:
                 changes["staged"].append(filename)
@@ -133,8 +135,13 @@ class GitService:
         Returns:
             Commit type: feat|fix|refactor|chore|docs|test|perf|style
         """
-        all_files = (changes["modified"] + changes["added"] + 
-                    changes["deleted"] + changes["untracked"])
+        raw_files = (
+            changes.get("modified", [])
+            + changes.get("added", [])
+            + changes.get("deleted", [])
+            + changes.get("untracked", [])
+        )
+        all_files = [f for f in raw_files if isinstance(f, str) and f]
         
         # Check file patterns
         has_tests = any("test" in f.lower() for f in all_files)
@@ -151,7 +158,7 @@ class GitService:
             return "chore"
         
         # Check diff content for keywords
-        diff_lower = diff.lower()
+        diff_lower = (diff or "").lower()
         if any(kw in diff_lower for kw in ["bug", "fix", "error", "issue"]):
             return "fix"
         if any(kw in diff_lower for kw in ["refactor", "cleanup", "simplify"]):

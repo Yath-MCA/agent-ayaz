@@ -1,12 +1,32 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 // Set AYAZDY_API_URL and AYAZDY_API_KEY in localStorage via the Settings panel,
 // or hardcode defaults below for local dev.
-const DEFAULT_API_URL = "http://127.0.0.1:8000";
+const DEFAULT_API_URL = (window.location && window.location.origin) || "http://127.0.0.1:8000";
+const DEFAULT_API_KEY = "your_super_secret_key";
+
+function bootstrapDashboardConfig() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const qpUrl = params.get("api_url");
+    const qpKey = params.get("api_key");
+
+    if (qpUrl && !localStorage.getItem("ayazdy_api_url")) {
+      localStorage.setItem("ayazdy_api_url", qpUrl);
+    }
+    if (qpKey && !localStorage.getItem("ayazdy_api_key")) {
+      localStorage.setItem("ayazdy_api_key", qpKey);
+    }
+  } catch {
+    // Keep dashboard functional even if URL parsing/localStorage fails.
+  }
+}
+
+bootstrapDashboardConfig();
 
 function cfg() {
   return {
     base: localStorage.getItem("ayazdy_api_url") || DEFAULT_API_URL,
-    key:  localStorage.getItem("ayazdy_api_key") || "",
+    key:  localStorage.getItem("ayazdy_api_key") || DEFAULT_API_KEY,
   };
 }
 
@@ -68,8 +88,11 @@ function HealthPanel({ autoRefresh }) {
   const [err, setErr]   = useState(null);
 
   const load = useCallback(() => {
-    api("/monitor/health")
-      .then(setData)
+    Promise.all([
+      api("/monitor/health"),
+      api("/monitor/telegram-config").catch(() => null),
+    ])
+      .then(([health, tg]) => setData({ ...health, telegram: tg }))
       .catch(e => setErr(e.message));
   }, []);
 
@@ -87,11 +110,15 @@ function HealthPanel({ autoRefresh }) {
       {data && (
         <div className="grid grid-cols-2 gap-2 text-sm">
           <Row k="Status"  v={<Badge label={data.status} color={data.status === "ok" ? "bg-green-700" : "bg-red-700"} />} />
-          <Row k="Mode"    v={<Badge label={data.agent_mode || "—"} color="bg-indigo-700" />} />
-          <Row k="Plugins" v={data.plugins_loaded ?? "—"} />
-          <Row k="Nodes"   v={data.registered_nodes ?? "—"} />
-          <Row k="Queue"   v={data.queue_size ?? "—"} />
-          <Row k="Memory"  v={data.memory_entries ?? "—"} />
+          <Row k="Ollama"  v={<Badge label={data.ollama_running ? "running" : "down"} color={data.ollama_running ? "bg-green-700" : "bg-red-700"} />} />
+          <Row k="Approvals" v={data.pending_approvals ?? "—"} />
+          <Row k="Telegram Bot" v={<Badge label={data.telegram_started ? "started" : "stopped"} color={data.telegram_started ? "bg-green-700" : "bg-yellow-700"} />} />
+          <Row k="Telegram Config" v={data.telegram ? <Badge label={data.telegram.configured ? "ready" : "invalid"} color={data.telegram.configured ? "bg-green-700" : "bg-red-700"} /> : "—"} />
+          {data.telegram && !data.telegram.configured && (
+            <>
+              <span className="text-slate-400 col-span-2">{(data.telegram.hints || []).join(" ")}</span>
+            </>
+          )}
         </div>
       )}
     </Card>
@@ -146,6 +173,12 @@ function ProjectSelector() {
   const [projects, setProjects] = useState([]);
   const [current,  setCurrent]  = useState(null);
   const [msg,      setMsg]      = useState(null);
+  const [query,    setQuery]    = useState("");
+  const [promptText, setPromptText] = useState("");
+  const [promptOut, setPromptOut] = useState("");
+  const [cmdText, setCmdText] = useState("");
+  const [cmdOut, setCmdOut] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     api("/projects").then(d => setProjects(d.projects || [])).catch(() => {});
@@ -155,24 +188,147 @@ function ProjectSelector() {
   useEffect(() => { load(); }, [load]);
 
   const select = (name) => {
-    api("/project/select", { method: "post", data: { name } })
-      .then(() => { setCurrent(name); setMsg(`Selected: ${name}`); })
+    api("/queue/status")
+      .then((status) => {
+        const queueFiles = (status.queue || []).filter((f) => /\.(txt|md)$/i.test(f));
+        const laterFiles = (status.later || []).filter((f) => /\.(txt|md)$/i.test(f));
+        const needsConfirm = queueFiles.length > 0 || laterFiles.length > 0;
+
+        if (needsConfirm) {
+          const message = [
+            "Pending agent-task text files found.",
+            queueFiles.length ? `queue/: ${queueFiles.join(", ")}` : "queue/: none",
+            laterFiles.length ? `later/: ${laterFiles.join(", ")}` : "later/: none",
+            "",
+            "Do you want to continue selecting this project and run only inside this selected project?",
+          ].join("\n");
+          const ok = window.confirm(message);
+          if (!ok) {
+            setMsg("Selection cancelled by user.");
+            return Promise.resolve(null);
+          }
+        }
+
+        return api("/project/select", {
+          method: "post",
+          data: { project: name, confirm_agent_tasks: true },
+        });
+      })
+      .then((resp) => {
+        if (!resp) return;
+        setCurrent(name);
+        setMsg(`Selected: ${name} (agent runs only in selected project context)`);
+      })
       .catch(e => setMsg(`Error: ${e.message}`));
   };
+
+  const runAnalysis = () => {
+    if (!current) {
+      setMsg("Select a project first.");
+      return;
+    }
+    if (!promptText.trim()) {
+      setMsg("Enter a prompt to analyze.");
+      return;
+    }
+
+    setBusy(true);
+    setPromptOut("");
+    api("/chat", {
+      method: "post",
+      data: { prompt: promptText, project: current, execute_commands: false },
+    })
+      .then((d) => setPromptOut(d.reply || "(no reply)"))
+      .catch((e) => setPromptOut(`Error: ${e.message}`))
+      .finally(() => setBusy(false));
+  };
+
+  const runCommand = () => {
+    if (!current) {
+      setMsg("Select a project first.");
+      return;
+    }
+    if (!cmdText.trim()) {
+      setMsg("Enter a command to execute.");
+      return;
+    }
+
+    setBusy(true);
+    setCmdOut("");
+    api("/project/run-custom", {
+      method: "post",
+      data: {
+        project: current,
+        command: cmdText,
+        auto_approve: true,
+        dry_run: false,
+      },
+    })
+      .then((d) => setCmdOut(d.output || `(exit=${d.exit_code})`))
+      .catch((e) => setCmdOut(`Error: ${e.message}`))
+      .finally(() => setBusy(false));
+  };
+
+  const filteredProjects = projects.filter((p) =>
+    p.toLowerCase().includes(query.trim().toLowerCase())
+  );
 
   return (
     <Card title="📁 Projects" action={<RefreshBtn onClick={load} />}>
       {msg && <p className="text-xs text-indigo-300">{msg}</p>}
       {current && <p className="text-xs text-slate-400">Current: <span className="text-indigo-300 font-semibold">{current}</span></p>}
+      <input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search project..."
+        className="bg-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-600 focus:outline-none focus:border-indigo-500"
+      />
       <div className="flex flex-col gap-1 max-h-40 overflow-y-auto">
-        {projects.map(p => (
+        {filteredProjects.map(p => (
           <button key={p} onClick={() => select(p)}
             className={`text-left text-sm px-3 py-1.5 rounded-lg transition
               ${p === current ? "bg-indigo-700 text-white" : "bg-slate-700 hover:bg-slate-600 text-slate-200"}`}>
             {p}
           </button>
         ))}
-        {projects.length === 0 && <p className="text-slate-500 text-xs">No projects found.</p>}
+        {filteredProjects.length === 0 && <p className="text-slate-500 text-xs">No matching projects.</p>}
+      </div>
+
+      <div className="mt-2 border-t border-slate-700 pt-3 flex flex-col gap-2">
+        <p className="text-xs text-slate-400">After selecting a project:</p>
+
+        <label className="text-xs text-slate-400">Analyze Prompt</label>
+        <textarea
+          value={promptText}
+          onChange={(e) => setPromptText(e.target.value)}
+          rows={3}
+          placeholder="Ask analysis prompt for selected project..."
+          className="bg-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-600 focus:outline-none focus:border-indigo-500"
+        />
+        <button
+          onClick={runAnalysis}
+          disabled={busy}
+          className="text-xs bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white px-3 py-1 rounded"
+        >
+          {busy ? "Running..." : "Analyze Prompt"}
+        </button>
+        {promptOut && <pre className="text-xs text-slate-300 bg-slate-900 rounded p-2 max-h-28 overflow-y-auto whitespace-pre-wrap">{promptOut}</pre>}
+
+        <label className="text-xs text-slate-400">Execute Command</label>
+        <input
+          value={cmdText}
+          onChange={(e) => setCmdText(e.target.value)}
+          placeholder="Example: python --version"
+          className="bg-slate-700 text-slate-200 text-xs px-2 py-1.5 rounded border border-slate-600 focus:outline-none focus:border-indigo-500"
+        />
+        <button
+          onClick={runCommand}
+          disabled={busy}
+          className="text-xs bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white px-3 py-1 rounded"
+        >
+          {busy ? "Running..." : "Execute Command"}
+        </button>
+        {cmdOut && <pre className="text-xs text-slate-300 bg-slate-900 rounded p-2 max-h-28 overflow-y-auto whitespace-pre-wrap">{cmdOut}</pre>}
       </div>
     </Card>
   );
@@ -240,7 +396,7 @@ function ApprovalQueue({ autoRefresh }) {
   const [msg,   setMsg]   = useState(null);
 
   const load = useCallback(() => {
-    api("/monitor/approvals").then(d => setItems(d.approvals || [])).catch(() => {});
+    api("/monitor/approvals").then(d => setItems(d.pending || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -293,7 +449,7 @@ function AuditLogs({ autoRefresh }) {
   const [logs, setLogs] = useState([]);
 
   const load = useCallback(() => {
-    api("/monitor/logs?limit=30").then(d => setLogs(d.logs || [])).catch(() => {});
+    api("/monitor/logs?limit=30").then(d => setLogs(d.entries || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -460,7 +616,7 @@ function RetryPanel() {
 // ── Settings ──────────────────────────────────────────────────────────────────
 function Settings({ onClose }) {
   const [url, setUrl] = useState(localStorage.getItem("ayazdy_api_url") || DEFAULT_API_URL);
-  const [key, setKey] = useState(localStorage.getItem("ayazdy_api_key") || "");
+  const [key, setKey] = useState(localStorage.getItem("ayazdy_api_key") || DEFAULT_API_KEY);
 
   const save = () => {
     localStorage.setItem("ayazdy_api_url", url);

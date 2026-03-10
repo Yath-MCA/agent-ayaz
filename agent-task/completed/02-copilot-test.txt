@@ -1,0 +1,1 @@
+Explain project startup command briefly.

@@ -1,0 +1,7 @@
+task: build-project
+type: task_file
+task_file: build.ps1
+timeout: 180
+auto_approve: true
+delay_seconds: 0
+description: Execute the PowerShell build script for the selected project

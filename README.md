@@ -38,11 +38,10 @@ bash run-production.sh
 - REST API + CLI + Web Dashboard
 
 ✅ **Multi-Provider LLM Integration**
-- Ollama (local LLM)
-- ChatGPT (OpenAI API)
-- Claude (Anthropic)
-- GitHub CLI
-- OpenRouter (multi-model)
+- Local Ollama
+- GitHub Copilot CLI
+- OpenAI API (optional)
+- OpenRouter (optional)
 - Auto-failover if primary provider unavailable
 
 ✅ **Production Grade**
@@ -75,6 +74,20 @@ bash run-production.sh
 ### Option 2: DEVELOPMENT (Manual Setup)
 See [Development Setup](#-setup-windows) section below for running locally with Ollama
 
+Production services use 9xxx ports by default (e.g., API `9234`, Dashboard `9890`, Grafana `9543`, Prometheus `9654`).
+
+---
+
+## 🖥 Desktop CLI (Inspired by Copilot-Ralph)
+
+Launch the local desktop assistant window from CLI:
+
+```bash
+ayazdy desktop
+```
+
+This opens the built-in desktop Git assistant (`tools/ayazgitdy_gui.py`) and keeps API/queue logic in the same project.
+
 ---
 
 ## 📊 Access Points (After Starting)
@@ -92,19 +105,20 @@ See [Development Setup](#-setup-windows) section below for running locally with 
 ## 📚 COMPLETE DOCUMENTATION
 
 ### Production Deployment
-- **[PRODUCTION_DEPLOYMENT.md](./PRODUCTION_DEPLOYMENT.md)** - Complete guide with Zero Setup workflow, architecture, monitoring
+- **[PRODUCTION_DEPLOYMENT.md](./docs/PRODUCTION_DEPLOYMENT.md)** - Complete guide with Zero Setup workflow, architecture, monitoring
 
 ### Task Queue System
-- **[TASK_QUEUE_SYSTEM.md](./TASK_QUEUE_SYSTEM.md)** - Complete architecture and usage guide
-- **[TASK_QUEUE_QUICKSTART.md](./TASK_QUEUE_QUICKSTART.md)** - 5-minute quick start
-- **[TASK_QUEUE_EXAMPLES.md](./TASK_QUEUE_EXAMPLES.md)** - Real-world working examples
-- **[TASK_QUEUE_SUGGESTIONS.md](./TASK_QUEUE_SUGGESTIONS.md)** - Advanced strategies
+- **[TASK_QUEUE_SYSTEM.md](./docs/TASK_QUEUE_SYSTEM.md)** - Complete architecture and usage guide
+- **[TASK_QUEUE_QUICKSTART.md](./docs/TASK_QUEUE_QUICKSTART.md)** - 5-minute quick start
+- **[TASK_QUEUE_EXAMPLES.md](./docs/TASK_QUEUE_EXAMPLES.md)** - Real-world working examples
+- **[TASK_QUEUE_SUGGESTIONS.md](./docs/TASK_QUEUE_SUGGESTIONS.md)** - Advanced strategies
 
 ### Docker Deployment
 - **[DOCKER_SETUP.md](./DOCKER_SETUP.md)** - Docker configuration and custom ports
 
 ### Getting Started
 - **[GETTING_STARTED.md](./GETTING_STARTED.md)** - First-time setup guide
+- **[how_to_run.md](./how_to_run.md)** - Command cheat sheet for Bot, Dashboard, and CLI
 
 ---
 
@@ -161,7 +175,7 @@ TELEGRAM_TOKEN=your_bot_token
 API_SECRET_KEY=your_super_secret_key
 ALLOWED_TELEGRAM_USER_ID=your_telegram_user_id
 HOST=0.0.0.0
-PORT=8000
+PORT=9234
 CORS_ORIGINS=http://localhost,http://127.0.0.1
 ```
 
@@ -174,6 +188,72 @@ Example on Windows: `D:/Program Files/Ollama/ollama.exe`
 
 ```bash
 python main.py
+```
+
+### 5) Run Bot, Dashboard, and CLI
+
+Server/API (required first):
+
+```bash
+python main.py
+```
+
+Dashboard (open in browser):
+
+```text
+http://localhost:9234/dashboard
+```
+
+GUI control center (one-click buttons for start/build/run):
+
+```bash
+open-control-center.bat
+```
+
+This opens a desktop window with click buttons for `start.bat`, `build.bat`, `build-exe.bat`, `run-production.bat`, and common CLI checks.
+
+CLI examples:
+
+```bash
+# Health (public endpoint, no API key needed)
+python -m cli.cli health
+
+# Protected commands (API key required)
+python -m cli.cli --key your_super_secret_key projects
+python -m cli.cli --key your_super_secret_key qstatus
+python -m cli.cli --key your_super_secret_key qrun
+python -m cli.cli --key your_super_secret_key qrun-text --limit 20
+python -m cli.cli --key your_super_secret_key select my-project
+python -m cli.cli --key your_super_secret_key analyze "summarize current setup" --project my-project
+python -m cli.cli --key your_super_secret_key exec "python --version" --project my-project
+python -m cli.cli --key your_super_secret_key run build.ps1 --project my-project
+```
+
+Optional runtime behavior:
+
+```env
+AUTO_OPEN_VSCODE=false
+```
+
+When `AUTO_OPEN_VSCODE=false`, selecting a project will not auto-open VS Code and stays CLI-first.
+
+Telegram bot:
+
+```env
+TELEGRAM_TOKEN=<your_bot_token>
+ALLOWED_TELEGRAM_USER_ID=<your_numeric_telegram_user_id>
+```
+
+After setting `.env`, restart `python main.py` and then use Telegram commands:
+
+```text
+/help
+/projects
+/project <name>
+/tasks
+/task <file_name>
+/qstatus
+/qrun
 ```
 
 ---
@@ -215,13 +295,13 @@ set API_KEY=your_super_secret_key
 List projects:
 
 ```bat
-curl -X GET "http://localhost:8000/projects" -H "X-Api-Key: %API_KEY%"
+curl -X GET "http://localhost:9234/projects" -H "X-Api-Key: %API_KEY%"
 ```
 
 Select a project (opens VS Code and returns run-task availability):
 
 ```bat
-curl -X POST "http://localhost:8000/project/select" ^
+curl -X POST "http://localhost:9234/project/select" ^
   -H "Content-Type: application/json" ^
   -H "X-Api-Key: %API_KEY%" ^
   -d "{\"project\":\"my-project\"}"
@@ -230,19 +310,19 @@ curl -X POST "http://localhost:8000/project/select" ^
 List run-task files for a selected project:
 
 ```bat
-curl -X GET "http://localhost:8000/project/tasks?project=my-project" -H "X-Api-Key: %API_KEY%"
+curl -X GET "http://localhost:9234/project/tasks?project=my-project" -H "X-Api-Key: %API_KEY%"
 ```
 
 Get current selected project for this API key:
 
 ```bat
-curl -X GET "http://localhost:8000/project/current" -H "X-Api-Key: %API_KEY%"
+curl -X GET "http://localhost:9234/project/current" -H "X-Api-Key: %API_KEY%"
 ```
 
 Run a task file from `run-task/`:
 
 ```bat
-curl -X POST "http://localhost:8000/project/run-task" ^
+curl -X POST "http://localhost:9234/project/run-task" ^
   -H "Content-Type: application/json" ^
   -H "X-Api-Key: %API_KEY%" ^
   -d "{\"project\":\"my-project\",\"task\":\"build.ps1\",\"dry_run\":false,\"auto_approve\":true,\"delay_seconds\":0}"
@@ -251,7 +331,7 @@ curl -X POST "http://localhost:8000/project/run-task" ^
 Run a custom command when no run-task files are available:
 
 ```bat
-curl -X POST "http://localhost:8000/project/run-custom" ^
+curl -X POST "http://localhost:9234/project/run-custom" ^
   -H "Content-Type: application/json" ^
   -H "X-Api-Key: %API_KEY%" ^
   -d "{\"project\":\"my-project\",\"command\":\"python --version\",\"dry_run\":false,\"auto_approve\":true,\"delay_seconds\":0}"
@@ -269,40 +349,40 @@ $headers = @{ "X-Api-Key" = $apiKey }
 List projects:
 
 ```powershell
-Invoke-RestMethod -Method GET -Uri "http://localhost:8000/projects" -Headers $headers
+Invoke-RestMethod -Method GET -Uri "http://localhost:9234/projects" -Headers $headers
 ```
 
 Select project (opens VS Code + returns run-task availability):
 
 ```powershell
 $body = @{ project = "my-project" } | ConvertTo-Json
-Invoke-RestMethod -Method POST -Uri "http://localhost:8000/project/select" -Headers $headers -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method POST -Uri "http://localhost:9234/project/select" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 List run-task files:
 
 ```powershell
-Invoke-RestMethod -Method GET -Uri "http://localhost:8000/project/tasks?project=my-project" -Headers $headers
+Invoke-RestMethod -Method GET -Uri "http://localhost:9234/project/tasks?project=my-project" -Headers $headers
 ```
 
 Get current selected project:
 
 ```powershell
-Invoke-RestMethod -Method GET -Uri "http://localhost:8000/project/current" -Headers $headers
+Invoke-RestMethod -Method GET -Uri "http://localhost:9234/project/current" -Headers $headers
 ```
 
 Run a task file from run-task folder:
 
 ```powershell
 $body = @{ project = "my-project"; task = "build.ps1"; dry_run = $false; auto_approve = $true; delay_seconds = 0 } | ConvertTo-Json
-Invoke-RestMethod -Method POST -Uri "http://localhost:8000/project/run-task" -Headers $headers -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method POST -Uri "http://localhost:9234/project/run-task" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 Run a custom command:
 
 ```powershell
 $body = @{ project = "my-project"; command = "python --version"; dry_run = $false; auto_approve = $true; delay_seconds = 0 } | ConvertTo-Json
-Invoke-RestMethod -Method POST -Uri "http://localhost:8000/project/run-custom" -Headers $headers -ContentType "application/json" -Body $body
+Invoke-RestMethod -Method POST -Uri "http://localhost:9234/project/run-custom" -Headers $headers -ContentType "application/json" -Body $body
 ```
 
 ## ✅ Quick Smoke Test Order
@@ -515,7 +595,7 @@ Send plain text prompt messages. Server streams response chunks and sends `[DONE
 ## 🌍 Optional External Access
 
 ```bash
-cloudflared tunnel --url http://localhost:8000
+cloudflared tunnel --url http://localhost:9234
 ```
 
 ---
@@ -651,7 +731,7 @@ The response includes a `git_commit` field with the result:
 New endpoint `GET /project/git-diff` returns the full git diff and status for a project — like copilot-ralph's per-task diff panel.
 
 ```bash
-curl -H "X-Api-Key: $KEY" "http://localhost:8000/project/git-diff?project=my-project"
+curl -H "X-Api-Key: $KEY" "http://localhost:9234/project/git-diff?project=my-project"
 ```
 
 Response:

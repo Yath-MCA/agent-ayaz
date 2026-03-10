@@ -16,8 +16,13 @@ def augment_plan_context(plan_task: str, project: Optional[str]) -> dict:
     suggestion: Optional[str] = None
 
     stats = get_execution_stats(project)
-    if stats["total"] > 0 and stats["failure_rate"] > 30:
-        hints.append(f"Warning: {stats['failure_rate']}% failure rate for project '{project}'.")
+    total = int(stats.get("total", 0) or 0)
+    failures = int(stats.get("failures", 0) or 0)
+    failure_rate = round((failures / total) * 100, 1) if total else 0.0
+    success_rate = float(stats.get("success_rate", 0) or 0)
+
+    if total > 0 and failure_rate > 30:
+        hints.append(f"Warning: {failure_rate}% failure rate for project '{project}'.")
 
     failures = get_recent_failures(project, limit=5)
     for f in failures:
@@ -37,9 +42,9 @@ def augment_plan_context(plan_task: str, project: Optional[str]) -> dict:
         "hints": hints,
         "retry_suggestion": suggestion,
         "stats_summary": {
-            "total": stats["total"],
-            "failure_rate": stats["failure_rate"],
-            "success_rate": stats["success_rate"],
+            "total": total,
+            "failure_rate": failure_rate,
+            "success_rate": success_rate,
         },
     }
 
