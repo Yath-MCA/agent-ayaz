@@ -1,0 +1,7 @@
+task: install-deps
+type: command
+command: pip install -r requirements.txt
+timeout: 120
+auto_approve: true
+delay_seconds: 0
+description: Install Python dependencies

@@ -1,0 +1,252 @@
+services:
+  # ============================================
+  # CORE: Queue Processor (Production)
+  # ============================================
+  queue-processor:
+    image: ${DOCKER_REGISTRY:-yasardevops}/ayazdy-queue-processor:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: ayazdy-queue-processor
+    hostname: queue-processor
+    environment:
+      - QUEUE_TIMEOUT=120
+      - TASK_TIMEOUT=300
+      - STRICT_MODE=false
+      - WORKER_ID=docker-processor-prod
+      - LOG_LEVEL=INFO
+      - TZ=UTC
+      # AI Agents Validation
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Telegram Bot
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - ALLOWED_TELEGRAM_USER_ID=${ALLOWED_TELEGRAM_USER_ID:-}
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
+    volumes:
+      - ./agent-task:/app/agent-task
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+      - ./workspace:/app/workspace
+    restart: always
+    networks:
+      - ayazdy-network
+    depends_on:
+      - queue-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=queue-processor,env=production"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from task_queue_system import TaskQueueManager; TaskQueueManager()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # API: REST API Server (Production)
+  # ============================================
+  queue-api:
+    image: ${DOCKER_REGISTRY:-yasardevops}/ayazdy-queue-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: ayazdy-queue-api
+    hostname: queue-api
+    ports:
+      - "9234:9234"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QUEUE_PATH=/app/agent-task
+      - LOG_LEVEL=INFO
+      - API_PORT=9234
+      - API_HOST=0.0.0.0
+      - TZ=UTC
+      # AI Agents
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Telegram Bot
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN:-}
+      - ALLOWED_TELEGRAM_USER_ID=${ALLOWED_TELEGRAM_USER_ID:-}
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
+    volumes:
+      - ./task_queue_system:/app/task_queue_system
+      - ./agent-task:/app/agent-task
+      - ./logs:/app/logs
+    command: python -m uvicorn task_queue_system.api:create_app --host 0.0.0.0 --port 9234 --workers 4
+    restart: always
+    networks:
+      - ayazdy-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9234/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=queue-api,env=production"
+
+  # ============================================
+  # DASHBOARD: Web UI (Production)
+  # ============================================
+  dashboard:
+    image: ${DOCKER_REGISTRY:-yasardevops}/ayazdy-dashboard:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    container_name: ayazdy-dashboard
+    hostname: dashboard
+    ports:
+      - "9890:9890"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - QUEUE_PATH=/app/agent-task
+      - API_URL=http://queue-api:9234
+      - DASHBOARD_PORT=9890
+      - DASHBOARD_HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      - TZ=UTC
+    volumes:
+      - ./task_queue_system:/app/task_queue_system
+      - ./agent-task:/app/agent-task
+      - ./logs:/app/logs
+    command: >
+      bash -c "python dashboard_server.py"
+    restart: always
+    networks:
+      - ayazdy-network
+    depends_on:
+      - queue-api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9890/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=dashboard,env=production"
+
+  # ============================================
+  # MONITORING: Prometheus (Production)
+  # ============================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ayazdy-prometheus
+    hostname: prometheus
+    ports:
+      - "9654:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    environment:
+      - TZ=UTC
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    restart: always
+    networks:
+      - ayazdy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+        labels: "service=prometheus,env=production"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # VISUALIZATION: Grafana (Production)
+  # ============================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ayazdy-grafana
+    hostname: grafana
+    ports:
+      - "9543:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-AyazDy2024!}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+      - TZ=UTC
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - ./monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+    restart: always
+    networks:
+      - ayazdy-network
+    depends_on:
+      - prometheus
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+        labels: "service=grafana,env=production"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # PERSISTENCE: PostgreSQL (Optional - Future)
+  # ============================================
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: ayazdy-postgres
+  #   environment:
+  #     - POSTGRES_USER=ayazdy
+  #     - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+  #     - POSTGRES_DB=task_queue
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   restart: always
+  #   networks:
+  #     - ayazdy-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ayazdy"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+networks:
+  ayazdy-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  # postgres_data:
+  #   driver: local

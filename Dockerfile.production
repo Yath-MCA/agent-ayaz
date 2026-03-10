@@ -1,0 +1,63 @@
+FROM python:3.11-slim
+
+# Production image for AyazDy Task Queue System
+# All dependencies downloaded at build time
+
+LABEL maintainer="AyazDy Team"
+LABEL description="Production-ready Task Queue System with AI Agent Integration"
+LABEL version="1.0.0"
+
+WORKDIR /app
+
+# Set environment
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    QUEUE_TIMEOUT=120 \
+    TASK_TIMEOUT=300 \
+    WORKER_ID=docker-ayazdy \
+    TZ=UTC
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    jq \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies (all at build time)
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.txt
+
+# Copy application code
+COPY task_queue_system/ ./task_queue_system/
+COPY services/ ./services/
+COPY config/ ./config/
+COPY main.py .
+COPY dashboard_server.py .
+COPY project_utils.py .
+COPY .env.production .
+
+# Create required directories
+RUN mkdir -p \
+    agent-task/queue \
+    agent-task/completed \
+    agent-task/later \
+    logs \
+    reports \
+    workspace \
+    cache
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:7234/health || exit 1
+
+# Default command - Run queue processor
+CMD ["python", "-m", "task_queue_system.cli", "run", "--path", "/app/agent-task"]

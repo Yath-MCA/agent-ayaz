@@ -1,0 +1,7 @@
+task: run-tests
+type: command
+command: pytest tests/
+timeout: 120
+auto_approve: true
+delay_seconds: 0
+description: Run the full test suite with pytest

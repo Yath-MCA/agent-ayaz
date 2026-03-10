@@ -1,0 +1,164 @@
+# Task Queue System - Configuration Template
+
+queue:
+  # Root directory for queue system
+  root: ./agent-task
+  
+  # Processing settings
+  max_tasks_per_run: 10          # Max tasks to process in one run
+  task_timeout: 300               # Default task timeout (seconds)
+  inter_task_delay: 5             # Delay between tasks (seconds)
+  
+  # Worker settings
+  worker_id: "worker-1"           # Unique worker identifier
+  heartbeat_interval: 30          # Heartbeat interval (seconds)
+
+# Security & Policy
+policy:
+  strict_mode: false              # Enforce strict validation
+  require_approval: false         # Require approval for all tasks
+  
+  # Command whitelisting
+  allowed_commands:
+    - "docker"
+    - "kubectl"
+    - "terraform"
+    - "ansible"
+    - "python"
+  
+  # Blocked command patterns
+  blocked_patterns:
+    - "rm -rf"
+    - "del /s"
+    - "; rm"
+    - "| rm"
+
+# Resource Management
+resources:
+  max_memory_mb: 4096            # Max memory per task
+  max_cpu_cores: 4                # Max CPU cores per task
+  disk_quota_gb: 100              # Max disk usage
+
+# Logging
+logging:
+  enabled: true
+  level: "INFO"                   # DEBUG | INFO | WARNING | ERROR
+  format: "json"                  # json | text
+  output_dir: "./logs"
+  retention_days: 30
+  
+  # Specific loggers
+  loggers:
+    - name: "task_queue_system"
+      level: "DEBUG"
+    - name: "executor"
+      level: "INFO"
+
+# Notifications
+notifications:
+  enabled: true
+  
+  handlers:
+    # Email notifications
+    - type: "email"
+      enabled: true
+      smtp_host: "smtp.example.com"
+      smtp_port: 587
+      from_address: "queue@example.com"
+      recipients:
+        - "ops@example.com"
+      on_events: ["failure", "approval_required"]
+    
+    # Slack notifications
+    - type: "slack"
+      enabled: false
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      on_events: ["failure", "success"]
+    
+    # Telegram notifications
+    - type: "telegram"
+      enabled: false
+      token: "${TELEGRAM_TOKEN}"
+      chat_id: "${TELEGRAM_CHAT_ID}"
+      on_events: ["failure"]
+
+# Monitoring & Metrics
+monitoring:
+  enabled: true
+  
+  # Prometheus metrics
+  prometheus:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  # Alert rules
+  alerts:
+    - name: "queue_depth_high"
+      condition: "queue_depth > 100"
+      severity: "warning"
+      action: "notify"
+    
+    - name: "task_failure_rate"
+      condition: "failure_rate > 0.1"
+      severity: "critical"
+      action: "notify"
+    
+    - name: "worker_offline"
+      condition: "heartbeat_missed > 3"
+      severity: "critical"
+      action: "alert"
+
+# Cleanup & Maintenance
+cleanup:
+  enabled: true
+  schedule: "0 2 * * *"           # 2 AM daily (cron format)
+  completed_retention_days: 30    # Keep completed tasks for N days
+  auto_archive_after_days: 15     # Archive older than N days
+  max_log_file_size_mb: 100       # Rotate logs at size
+
+# Integration
+integrations:
+  # GitHub Actions
+  github:
+    enabled: false
+    webhook_secret: "${GITHUB_WEBHOOK_SECRET}"
+    auto_queue_on_push: true
+    auto_queue_on_pr: false
+  
+  # GitLab CI
+  gitlab:
+    enabled: false
+    webhook_token: "${GITLAB_WEBHOOK_TOKEN}"
+    auto_queue_on_push: true
+  
+  # Webhooks
+  webhooks:
+    enabled: true
+    allowed_sources:
+      - "127.0.0.1"
+      - "10.0.0.0/8"
+    timeout: 10
+
+# Advanced
+advanced:
+  # Distributed locking (for multi-worker setup)
+  distributed_lock:
+    enabled: false
+    backend: "redis"              # redis | etcd | filesystem
+    redis_url: "redis://localhost:6379"
+    lock_timeout: 300
+  
+  # Task persistence
+  persistence:
+    enabled: true
+    backend: "sqlite"             # sqlite | postgresql
+    sqlite_path: "./task-queue.db"
+    max_connections: 10
+  
+  # Performance tuning
+  performance:
+    enable_compression: true
+    enable_caching: true
+    cache_ttl_seconds: 60
+    batch_size: 100
