@@ -350,6 +350,107 @@ async def websocket_chat(websocket: WebSocket):
     except WebSocketDisconnect:
         return
 
+
+@app.websocket("/ws/run")
+async def websocket_run(websocket: WebSocket, x_api_key: str = None):
+    """WebSocket endpoint for real-time task execution streaming.
+
+    Protocol:
+      • Client sends JSON: {"task": "build.ps1", "project": "my-project", "dry_run": false}
+      • Server streams output lines as plain text
+      • Server sends "[DONE]" with a JSON summary when finished
+      • Server sends "[ERROR] <message>" on failure
+    """
+    await websocket.accept()
+
+    # Authenticate via query-param api_key or header value passed as first message
+    api_key_value = x_api_key or websocket.query_params.get("api_key", "")
+
+    try:
+        api_key_value = validate_api_key(api_key_value)
+    except HTTPException:
+        await websocket.send_text("[ERROR] Unauthorized — provide ?api_key=<key>")
+        await websocket.close(code=4401)
+        return
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_text("[ERROR] Invalid JSON payload")
+                continue
+
+            task_name = (payload.get("task") or "").strip()
+            project_name = payload.get("project")
+            dry_run = bool(payload.get("dry_run", False))
+
+            if not task_name:
+                await websocket.send_text("[ERROR] 'task' field is required")
+                continue
+
+            # Resolve project
+            selected_map: dict[str, str] = app.state.selected_projects
+            selected_name = project_name or selected_map.get(api_key_value)
+            if not selected_name:
+                await websocket.send_text("[ERROR] No project selected — pass 'project' or select via /project/select")
+                continue
+
+            project_path = get_project_path(selected_name)
+            if not project_path:
+                await websocket.send_text(f"[ERROR] Project not found: {selected_name}")
+                continue
+
+            task_file = get_task_file(project_path, task_name)
+            if not task_file:
+                await websocket.send_text(f"[ERROR] Task not found: {task_name}")
+                continue
+
+            if dry_run:
+                await websocket.send_text(f"[DRY-RUN] Would execute: {task_name}")
+                summary = json.dumps({"task": task_name, "dry_run": True, "exit_code": 0})
+                await websocket.send_text(f"[DONE] {summary}")
+                continue
+
+            await websocket.send_text(f"▶ Running {task_name} …")
+
+            loop = asyncio.get_event_loop()
+            execution = await loop.run_in_executor(
+                None,
+                lambda: execute_task_file_result(
+                    task_file,
+                    cwd=str(project_path),
+                    timeout_seconds=settings.task_timeout_seconds,
+                    max_output_chars=settings.max_output_chars,
+                ),
+            )
+
+            if execution.output:
+                for line in execution.output.splitlines():
+                    await websocket.send_text(line)
+
+            record_execution(
+                user=f"ws:{api_key_value[-4:]}",
+                project=selected_name,
+                task=task_name,
+                command=str(task_file),
+                plan_type="ws-run",
+                exit_code=execution.exit_code,
+                duration_ms=execution.duration_ms,
+                approved=True,
+            )
+
+            summary = json.dumps({
+                "task": task_name,
+                "exit_code": execution.exit_code,
+                "duration_ms": execution.duration_ms,
+            })
+            await websocket.send_text(f"[DONE] {summary}")
+
+    except WebSocketDisconnect:
+        return
+
 @app.post("/run-task", response_model=AgentResponse)
 async def run_task(body: PromptRequest, request: Request, x_api_key: str = Header(None)):
     require_protected_access(request, x_api_key, "/run-task")
