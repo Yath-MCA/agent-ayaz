@@ -27,6 +27,7 @@ class Settings:
     rate_limit_per_minute: int
     auto_approve_default: bool
     default_execution_delay_seconds: int
+    auto_git_commit_on_task: bool
 
 
 def get_settings() -> Settings:
@@ -64,4 +65,5 @@ def get_settings() -> Settings:
         rate_limit_per_minute=int(os.getenv("RATE_LIMIT_PER_MINUTE", "120")),
         auto_approve_default=os.getenv("AUTO_APPROVE", "true").strip().lower() in {"1", "true", "yes", "on"},
         default_execution_delay_seconds=int(os.getenv("DEFAULT_EXECUTION_DELAY_SECONDS", "0")),
+        auto_git_commit_on_task=os.getenv("AUTO_GIT_COMMIT", "false").strip().lower() in {"1", "true", "yes", "on"},
     )

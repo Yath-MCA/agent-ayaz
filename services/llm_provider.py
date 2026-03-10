@@ -5,13 +5,17 @@ Multi-provider support with automatic fallback chain:
 2. OpenAI API (if API key available)
 3. OpenRouter (if API key available)
 4. LM Studio (local alternative)
-5. Mock mode (for testing/demos)
+5. GitHub Copilot CLI (if gh CLI authenticated)
+6. Mock mode (for testing/demos)
 """
 
 import os
+import asyncio
 import httpx
 import json
 import logging
+import shutil
+import subprocess
 from typing import Optional, Dict, Any, AsyncGenerator
 from enum import Enum
 from dataclasses import dataclass
@@ -25,6 +29,7 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     OPENROUTER = "openrouter"
     LM_STUDIO = "lm_studio"
+    GITHUB_COPILOT = "github_copilot"
     MOCK = "mock"
 
 
@@ -49,7 +54,8 @@ class LLMProviderService:
     2. OpenAI (cloud, requires API key)
     3. OpenRouter (cloud, requires API key)
     4. LM Studio (local alternative to Ollama)
-    5. Mock (fallback for testing)
+    5. GitHub Copilot CLI (uses gh copilot suggest, requires gh CLI authenticated)
+    6. Mock (fallback for testing)
     """
     
     def __init__(self):
@@ -96,7 +102,17 @@ class LLMProviderService:
             available=False
         )
         
-        # 5. Mock (always available as last resort)
+        # 5. GitHub Copilot CLI (uses gh copilot suggest)
+        gh_available = shutil.which("gh") is not None
+        self.providers[LLMProvider.GITHUB_COPILOT] = LLMConfig(
+            provider=LLMProvider.GITHUB_COPILOT,
+            model=os.getenv("GITHUB_COPILOT_MODEL", "copilot"),
+            base_url="gh://copilot/suggest",
+            available=gh_available,
+            error=None if gh_available else "gh CLI not found in PATH",
+        )
+        
+        # 6. Mock (always available as last resort)
         self.providers[LLMProvider.MOCK] = LLMConfig(
             provider=LLMProvider.MOCK,
             model="mock",
@@ -110,6 +126,31 @@ class LLMProviderService:
         
         if provider == LLMProvider.MOCK:
             return True
+        
+        if provider == LLMProvider.GITHUB_COPILOT:
+            # Check gh CLI is installed and authenticated
+            if shutil.which("gh") is None:
+                config.available = False
+                config.error = "gh CLI not found in PATH"
+                return False
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        ["gh", "auth", "status"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    ),
+                )
+                available = result.returncode == 0
+                config.available = available
+                config.error = None if available else "gh CLI not authenticated (run: gh auth login)"
+                return available
+            except Exception as e:
+                config.available = False
+                config.error = str(e)
+                return False
         
         try:
             async with httpx.AsyncClient(timeout=5) as client:
@@ -158,6 +199,7 @@ class LLMProviderService:
             LLMProvider.OPENAI,
             LLMProvider.OPENROUTER,
             LLMProvider.LM_STUDIO,
+            LLMProvider.GITHUB_COPILOT,
             LLMProvider.MOCK,
         ]
         
@@ -200,6 +242,9 @@ class LLMProviderService:
             
             elif provider == LLMProvider.LM_STUDIO:
                 return await self._call_lm_studio(prompt, config)
+            
+            elif provider == LLMProvider.GITHUB_COPILOT:
+                return await self._call_github_copilot(prompt, config)
             
             elif provider == LLMProvider.MOCK:
                 return self._mock_response(prompt)
@@ -244,6 +289,10 @@ class LLMProviderService:
             elif provider == LLMProvider.LM_STUDIO:
                 async for chunk in self._stream_lm_studio(prompt, config):
                     yield chunk
+            
+            elif provider == LLMProvider.GITHUB_COPILOT:
+                result = await self._call_github_copilot(prompt, config)
+                yield result
             
             elif provider == LLMProvider.MOCK:
                 yield self._mock_response(prompt)
@@ -359,6 +408,37 @@ class LLMProviderService:
         async for chunk in self._stream_openai_compatible(prompt, config):
             yield chunk
     
+    async def _call_github_copilot(self, prompt: str, config: LLMConfig) -> str:
+        """
+        Call GitHub Copilot CLI via `gh copilot suggest`.
+        
+        Each call is isolated (no accumulated context), preventing LLM context rot.
+        Requires: gh CLI installed and authenticated (`gh auth login`).
+        """
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    ["gh", "copilot", "suggest", "-t", "shell", prompt],
+                    capture_output=True,
+                    text=True,
+                    timeout=config.timeout,
+                ),
+            )            
+            if result.returncode == 0 and result.stdout.strip():
+                output = result.stdout.strip()
+                # Extract suggestion lines (skip blank lines from gh copilot output)
+                lines = [line for line in output.splitlines() if line.strip()]
+                return "\n".join(lines)
+            
+            stderr = result.stderr.strip()
+            raise RuntimeError(f"gh copilot suggest failed (exit {result.returncode}): {stderr}")
+        
+        except FileNotFoundError:
+            raise RuntimeError("gh CLI not found. Install from https://cli.github.com/")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"gh copilot suggest timed out after {config.timeout}s")
+    
     def _mock_response(self, prompt: str) -> str:
         """Mock response for testing/fallback."""
         return (
@@ -393,6 +473,7 @@ class LLMProviderService:
                 LLMProvider.OPENAI,
                 LLMProvider.OPENROUTER,
                 LLMProvider.LM_STUDIO,
+                LLMProvider.GITHUB_COPILOT,
                 LLMProvider.MOCK,
             ]
         }

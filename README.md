@@ -522,11 +522,164 @@ cloudflared tunnel --url http://localhost:8000
 
 ## ✅ Production Checklist
 
-- Strong `API_SECRET_KEY`
-- Correct `PROJECT_ROOT` or `PROJECT_ROOTS`
-- Rotated/valid Telegram token
-- Ollama running and reachable
-- Firewall and reverse-proxy rules verified
+### Security
+- [ ] Strong `API_SECRET_KEY` set in `.env`
+- [ ] `RBAC_ROLES` configured for multi-user access
+- [ ] `ALLOWED_TELEGRAM_USER_ID` restricted to trusted users
+- [ ] Firewall rules verified (if exposing externally)
+
+### Configuration
+- [ ] Correct `PROJECT_ROOT` path set
+- [ ] `AGENT_MODE` set to appropriate level (SAFE/CONTROLLED/AUTONOMOUS)
+- [ ] `AUTONOMOUS_RISK_THRESHOLD` tuned for your risk tolerance
+- [ ] Ollama running and reachable at `OLLAMA_URL`
+
+### Monitoring
+- [ ] Dashboard accessible at `/dashboard/`
+- [ ] Audit log writing to `logs/agent_audit.log`
+- [ ] Memory database created at `logs/memory.db`
+- [ ] Plugins auto-loading from `plugins/` directory
+
+### Testing
+- [ ] Run `ayazdy health` — all checks pass
+- [ ] Run `ayazdy self-check` — Ollama, DB, approval store, DSL validated
+- [ ] Test approval workflow: reject high-risk task, approve low-risk
+- [ ] Verify queue processing: place test `.yaml` in `agent-task/queue/`, run `ayazdy qrun`
+
+---
+
+## 🧭 Troubleshooting
+
+**Dashboard can't connect to API**
+- Check API URL in Settings (⚙️ icon) — should be `http://127.0.0.1:8000`
+- Verify API key matches `API_SECRET_KEY` from `.env`
+- Check CORS settings — `CORS_ORIGINS` must include dashboard origin
+
+**Telegram bot not responding**
+- Verify `TELEGRAM_TOKEN` is valid
+- Check `ALLOWED_TELEGRAM_USER_ID` matches your Telegram user ID (use `/id` command)
+- Ensure Telegram service started successfully (check startup logs)
+
+**"Ollama not running" error**
+- Start Ollama: `ollama serve` or run Ollama Desktop app
+- Verify `OLLAMA_URL` in `.env` (default: `http://localhost:11434`)
+- Test manually: `ollama list` should show installed models
+
+**Tasks stuck in "pending" approval**
+- Check `/monitor/approvals` for pending tokens
+- Approve via CLI: `ayazdy approve <token>`
+- Or via dashboard: Approvals tab → ✔ Approve button
+- Or via Telegram: `/approve <token>`
+
+**High memory usage from SQLite**
+- Periodically archive old entries from `logs/memory.db`
+- Or delete the file (will reset history) — auto-recreates on next run
+
+**Plugin not loading**
+- Check plugin file doesn't start with `_` (those are skipped)
+- Verify `register(manager)` function exists
+- Check startup logs for plugin load messages
+
+---
+
+## 🆚 Agent Ayazdy vs Copilot-Ralph
+
+[copilot-ralph](https://github.com/ashiqsultan/copilot-ralph) is a desktop application that uses GitHub Copilot CLI to build projects task by task. Here is a comparison:
+
+| Feature | Agent Ayazdy | Copilot-Ralph |
+|---|---|---|
+| **Platform** | Python REST API server (FastAPI) | Electron desktop app (React + Vite) |
+| **LLM providers** | Ollama, OpenAI, OpenRouter, LM Studio, **GitHub Copilot CLI** | GitHub Copilot CLI only |
+| **Per-task git commit** | ✅ Optional (`auto_git_commit=true` or `AUTO_GIT_COMMIT=true`) | ✅ Always on |
+| **Git diff view** | ✅ `GET /project/git-diff` endpoint | ✅ Built-in UI panel |
+| **Context isolation** | Memory-augmented prompts (default); Copilot CLI provider uses fresh context per call | Each task call is isolated (no context rot) |
+| **Approval workflow** | ✅ Token-based (approve/reject before execution) | ❌ Not present |
+| **Risk scoring** | ✅ 1-10 scale with SAFE/CONTROLLED/AUTONOMOUS modes | ❌ Not present |
+| **RBAC** | ✅ Admin/Operator/Viewer roles | ❌ Not present |
+| **Audit log** | ✅ Immutable JSONL audit trail | ❌ Not present |
+| **Plugin system** | ✅ 4 lifecycle hooks | ❌ Not present |
+| **Telegram bot** | ✅ 15+ commands | ❌ Not present |
+| **Web dashboard** | ✅ Real-time React dashboard | ✅ Electron UI |
+| **Task queue** | ✅ File-based queue/completed/later | Plain JSON files |
+| **Storage** | SQLite memory + JSONL audit | Plain JSON + txt files |
+| **Plan mode** | ✅ Planner agent generates structured plan | ✅ Optional plan mode |
+| **Retry on failure** | ✅ Auto-retry in AUTONOMOUS mode | ❌ Not present |
+
+### Features Added Inspired by Copilot-Ralph
+
+The following features were added to agent-ayaz based on the copilot-ralph comparison:
+
+#### 1. GitHub Copilot CLI as LLM Provider
+
+GitHub Copilot CLI (`gh copilot suggest`) is now supported as a fallback LLM provider. It auto-detects if `gh` CLI is installed and authenticated.
+
+**Priority order:** Ollama → OpenAI → OpenRouter → LM Studio → **GitHub Copilot CLI** → Mock
+
+Each `gh copilot suggest` call is isolated (fresh context, no accumulated history) — the same approach copilot-ralph uses to prevent LLM context rot.
+
+**Requirement:** Install [GitHub CLI](https://cli.github.com/) and authenticate with `gh auth login`.
+
+#### 2. Auto Git-Commit After Task Execution
+
+After each successful task execution, agent-ayaz can automatically commit all project changes with a semantic commit message — the same model used by copilot-ralph's per-task commits.
+
+**Enable globally** in `.env`:
+```env
+AUTO_GIT_COMMIT=true
+```
+
+**Enable per-request** in the request body:
+```json
+{ "task": "build.ps1", "auto_git_commit": true }
+```
+
+The response includes a `git_commit` field with the result:
+```json
+{
+  "task": "build.ps1",
+  "exit_code": 0,
+  "git_commit": {
+    "success": true,
+    "commit_hash": "abc1234",
+    "branch": "main"
+  }
+}
+```
+
+#### 3. Git Diff View
+
+New endpoint `GET /project/git-diff` returns the full git diff and status for a project — like copilot-ralph's per-task diff panel.
+
+```bash
+curl -H "X-Api-Key: $KEY" "http://localhost:8000/project/git-diff?project=my-project"
+```
+
+Response:
+```json
+{
+  "project": "my-project",
+  "branch": "main",
+  "staged": false,
+  "status": { "modified": ["app.py"], "added": [], "deleted": [], "total": 1 },
+  "diff_stat": " app.py | 5 +++++\n 1 file changed, 5 insertions(+)",
+  "diff": "diff --git a/app.py b/app.py\n..."
+}
+```
+
+Use `?staged=true` to view staged changes instead.
+
+#### 4. `/project/run-custom` Route Registration
+
+The `/project/run-custom` endpoint was previously defined as a function but never registered as a route. It is now properly exposed as `POST /project/run-custom`, also supporting `auto_git_commit`.
+
+---
+
+## 📚 Further Reading
+
+- **Dashboard Guide:** `dashboard/README.md`
+- **Task Queue Specs:** `agent-task/completed/01-07` (phase implementation specs)
+- **Plugin Development:** See `plugins/logger_plugin.py` for example
+- **API Client Reference:** `tools/api_client.py`
 
 ---
 
