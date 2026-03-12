@@ -1,9 +1,10 @@
 """Structured logging service for AgentAyazDaddy.
 
-Writes three log files:
-  logs/agent.log   — general agent lifecycle events
-  logs/tasks.log   — task start / completion / failure records
-  logs/errors.log  — error events only
+Writes four log files:
+  logs/agent.log        — general agent lifecycle events
+  logs/tasks.log        — task start / completion / failure records
+  logs/errors.log       — error events only
+  logs/ai-analysis.log  — AI/Ollama analysis results and suggestions
 
 Each entry is a JSON line: { timestamp, level, task, status, duration_ms, message, ... }
 """
@@ -84,6 +85,27 @@ def log_task_event(
         log_error(task=task, message=message or f"Task '{task}' failed", extra=extra)
 
 
+def log_ai_analysis(
+    task: str,
+    analysis: str,
+    model: Optional[str] = None,
+    trigger: str = "manual",
+    suggestions: Optional[list] = None,
+    extra: Optional[dict] = None,
+) -> None:
+    """Log an AI/Ollama analysis result to ai-analysis.log."""
+    record = {
+        "timestamp": _now_iso(),
+        "task": task,
+        "model": model,
+        "trigger": trigger,
+        "analysis": analysis,
+        "suggestions": suggestions or [],
+        **(extra or {}),
+    }
+    _write_jsonl(_LOG_DIR / "ai-analysis.log", record)
+
+
 def log_error(
     message: str,
     task: Optional[str] = None,
@@ -110,7 +132,7 @@ def read_log(
 ) -> list[dict]:
     """Read the last `limit` lines from a log file.
 
-    log_type: 'agent' | 'tasks' | 'errors'
+    log_type: 'agent' | 'tasks' | 'errors' | 'ai-analysis'
     """
     path = _LOG_DIR / f"{log_type}.log"
     if not path.exists():

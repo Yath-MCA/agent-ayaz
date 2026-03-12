@@ -1,0 +1,45 @@
+{
+  "name": "AgentAyazDaddy",
+  "version": "2.0.0",
+  "mode": "CONTROLLED",
+  "retry_limit": 3,
+  "retry_delay_seconds": 5,
+  "task_timeout_seconds": 300,
+  "queue_lock_timeout_seconds": 600,
+  "self_healing": true,
+  "ai_analysis_on_failure": true,
+  "ollama_model": null,
+  "sub_agents": {
+    "dev": {
+      "enabled": true,
+      "task_types": ["shell", "python", "node"],
+      "description": "Handles development tasks: build, lint, format"
+    },
+    "qa": {
+      "enabled": true,
+      "task_types": ["python", "shell"],
+      "description": "Handles quality assurance: tests, coverage, compare"
+    },
+    "build": {
+      "enabled": true,
+      "task_types": ["shell", "node", "python"],
+      "description": "Handles build pipeline: compile, bundle, package"
+    },
+    "deploy": {
+      "enabled": false,
+      "task_types": ["shell", "api"],
+      "description": "Handles deployment: docker, remote, publish"
+    }
+  },
+  "scan_markers": [
+    "package.json",
+    "pyproject.toml",
+    "requirements.txt",
+    "gulpfile.js",
+    "Makefile",
+    "pom.xml",
+    "build.gradle"
+  ],
+  "dashboard_url": null,
+  "log_ai_analysis": true
+}

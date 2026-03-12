@@ -4,9 +4,10 @@
   "project": "impact",
   "description": "Compare HTML output before and after build",
   "type": "python",
+  "agent": "qa",
   "script": "compare_html.py",
   "timeout": 120,
-  "retry_count": 2,
+  "retry": 2,
   "retry_delay": 5,
   "auto_approve": true
 }

@@ -4,9 +4,10 @@
   "project": "impact",
   "description": "Deploy project to target environment",
   "type": "shell",
+  "agent": "deploy",
   "command": "npm run deploy",
   "timeout": 600,
-  "retry_count": 1,
+  "retry": 1,
   "retry_delay": 30,
   "auto_approve": false,
   "approval_required": true

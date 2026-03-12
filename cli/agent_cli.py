@@ -1,19 +1,25 @@
-"""AgentAyazDaddy — Main CLI entry point.
+"""AgentAyazDaddy v2 — Autonomous CLI AI Agent for Developer Automation.
 
 Commands:
   agent project <name>      Select project, open in VS Code, show run-task files
   agent projects            List all configured projects
+  agent scan                Auto-discover projects from filesystem
   agent tasks [name]        List run-task files for a project
   agent task <file>         Run a specific run-task file in the selected project
-  agent run <task>          Run a task (project context aware)
-  agent queue               Show task queue status
+  agent run <task>          Run a task with self-healing (retry + AI analysis)
+  agent queue               Show queue status
+  agent doctor              Full environment health check
+  agent optimize            AI-powered workflow optimization suggestions
+  agent suggest             AI-suggested fixes for recent failures
   agent schedule            Show/manage scheduler
-  agent logs                Tail structured logs
+  agent logs                Tail structured logs (tasks|agent|errors|ai-analysis)
   agent status              Full system status
+  agent live                Live terminal dashboard (auto-refresh)
   agent analyze <prompt>    AI analysis via Ollama/LLM
   agent ask <question>      Ask Ollama a natural language question
   agent verify <task>       Pre-run workflow verification
   agent dashboard           Post task status to dashboard
+  agent config              Show agent configuration (config/agent.json)
 
 Usage:
   python -m cli.agent_cli [COMMAND] [OPTIONS]
@@ -118,43 +124,82 @@ def run(
     project: Optional[str] = typer.Option(None, "--project", "-p", help="Project context"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Simulate without executing"),
     verify: bool = typer.Option(False, "--verify", help="Run workflow verification first"),
+    no_heal: bool = typer.Option(False, "--no-heal", help="Disable self-healing retry on failure"),
     url: Optional[str] = _url_option,
     key: Optional[str] = _key_option,
 ) -> None:
-    """Run a task by name. Uses task queue system and project context."""
+    """Run a task with self-healing (auto-retry + AI analysis on failure)."""
     ui.print_banner()
     client = _client(url or _BASE_URL_DEFAULT, key or _API_KEY_DEFAULT)
 
     if verify:
         console.print("\n[bold]Running pre-execution verification…[/bold]")
-        from agents.workflow_verifier import verify_task
-        from services.structured_logger import log_task_event
-
-        report = verify_task(
-            task_name=task,
-            base_url=url or _BASE_URL_DEFAULT,
-        )
+        from agents.workflow_verifier import verify_task as _verify_task
+        report = _verify_task(task_name=task, base_url=url or _BASE_URL_DEFAULT)
         ui.print_verification(report)
         if not report.passed:
             console.print("[red]Verification failed — aborting.[/red]")
             raise typer.Exit(1)
 
+    # Load agent config for retry settings
+    cfg_path = Path("config/agent.json")
+    agent_cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    retry_limit = agent_cfg.get("retry_limit", 1) if not no_heal else 1
+    self_healing = agent_cfg.get("self_healing", True) and not no_heal
+    ai_on_fail = agent_cfg.get("ai_analysis_on_failure", True) and not no_heal
+
     console.print(f"\n[cyan]▶ Running task:[/cyan] [bold]{task}[/bold]" +
                   (f"  (project: {project})" if project else "") +
-                  ("  [dim][dry-run][/dim]" if dry_run else ""))
+                  ("  [dim][dry-run][/dim]" if dry_run else "") +
+                  ("  [dim][self-heal on][/dim]" if self_healing else ""))
 
-    with ui.spinner(f"Executing {task}…") as prog:
-        prog.start()
-        result = client.run_task(task=task, project=project, dry_run=dry_run)
-        prog.stop()
+    result = {}
+    for attempt in range(retry_limit):
+        if attempt > 0:
+            console.print(f"\n[yellow]⟳ Retry {attempt}/{retry_limit - 1}…[/yellow]")
+
+        with ui.spinner(f"Executing {task}…") as prog:
+            prog.start()
+            result = client.run_task(task=task, project=project, dry_run=dry_run)
+            prog.stop()
+
+        status_val = result.get("status", "unknown")
+        if status_val not in ("failed", "error"):
+            break
+
+        # Self-healing: ask Ollama for analysis on failure
+        if ai_on_fail and attempt < retry_limit - 1:
+            console.print(f"\n[yellow]⚠ Task failed. Running AI analysis…[/yellow]")
+            try:
+                import asyncio
+                from services.ollama_service import call_ollama
+                from services.structured_logger import log_ai_analysis
+
+                ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+                ollama_model = os.getenv("OLLAMA_MODEL", "mistral")
+                error_text = str(result.get("output") or result.get("detail") or "Unknown error")[:500]
+                prompt = (f"Task '{task}' failed with output:\n{error_text}\n\n"
+                          "Briefly explain why and suggest a fix in 3 bullet points.")
+
+                with ui.spinner("Asking Ollama…") as p2:
+                    p2.start()
+                    analysis = asyncio.run(call_ollama(prompt=prompt, model=ollama_model, base_url=ollama_url))
+                    p2.stop()
+
+                if analysis:
+                    from rich.panel import Panel
+                    console.print(Panel(analysis, title="[bold yellow]AI Analysis[/bold yellow]", border_style="yellow"))
+                    log_ai_analysis(task=task, analysis=analysis, model=ollama_model,
+                                    trigger="self_heal", extra={"attempt": attempt})
+            except Exception as exc:
+                console.print(f"[dim]AI analysis unavailable: {exc}[/dim]")
 
     ui.print_task_result(result)
 
     # Log to structured logs
     try:
         from services.structured_logger import log_task_event
-        status_val = result.get("status", "unknown")
-        log_task_event(task=task, status=status_val, project=project,
+        log_task_event(task=task, status=result.get("status", "unknown"), project=project,
                        message=str(result.get("output", ""))[:200])
     except Exception:
         pass
@@ -431,7 +476,7 @@ def schedule(
 
 @app.command()
 def logs(
-    log_type: str = typer.Argument("tasks", help="Log type: tasks | agent | errors"),
+    log_type: str = typer.Argument("tasks", help="Log type: tasks | agent | errors | ai-analysis"),
     limit: int = typer.Option(20, "--limit", "-n", help="Number of recent entries"),
     raw: bool = _raw_option,
 ) -> None:
@@ -554,6 +599,285 @@ def dashboard(
         console.print(f"[red]✘ Dashboard update failed: {result.get('detail')}[/red]")
         raise typer.Exit(1)
     console.print(f"[green]✔ Dashboard updated:[/green] {task} → {task_status}")
+
+
+@app.command()
+def doctor(
+    url: Optional[str] = _url_option,
+    key: Optional[str] = _key_option,
+) -> None:
+    """Full environment health check: API, Ollama, Python, ports, project roots."""
+    import asyncio
+    import shutil
+    from rich.table import Table
+    from rich import box as rbox
+
+    ui.print_banner()
+    console.print("[bold]Running environment health check…[/bold]\n")
+
+    checks: list[tuple[str, str, str]] = []
+
+    # Python
+    import sys as _sys
+    py_ver = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
+    checks.append(("Python", py_ver, "green"))
+
+    # API server
+    client = _client(url or _BASE_URL_DEFAULT, key or _API_KEY_DEFAULT)
+    health = client.health()
+    if not health.get("error"):
+        checks.append(("API Server", f"✔ {_BASE_URL_DEFAULT}", "green"))
+    else:
+        checks.append(("API Server", f"✘ unreachable ({_BASE_URL_DEFAULT})", "red"))
+
+    # Ollama
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    try:
+        import requests
+        r = requests.get(f"{ollama_url}/api/tags", timeout=4)
+        model_count = len(r.json().get("models", []))
+        checks.append(("Ollama", f"✔ {ollama_url}  ({model_count} models)", "green"))
+    except Exception as exc:
+        checks.append(("Ollama", f"✘ {ollama_url} — {exc}", "red"))
+
+    # Required packages
+    for pkg in ["typer", "rich", "apscheduler", "requests", "fastapi"]:
+        try:
+            __import__(pkg.replace("-", "_"))
+            checks.append((f"pkg: {pkg}", "installed", "green"))
+        except ImportError:
+            checks.append((f"pkg: {pkg}", "MISSING", "red"))
+
+    # Project roots
+    from project_utils import get_project_roots
+    for root in get_project_roots():
+        if root.exists():
+            checks.append((f"Root: {root}", "exists", "green"))
+        else:
+            checks.append((f"Root: {root}", "NOT FOUND", "yellow"))
+
+    # config files
+    for cfg in ["config/agent.json", "config/projects.json", "config/schedule.json"]:
+        if Path(cfg).exists():
+            checks.append((f"config: {cfg}", "present", "green"))
+        else:
+            checks.append((f"config: {cfg}", "missing", "yellow"))
+
+    table = Table(title="[bold]Doctor Report[/bold]", box=rbox.ROUNDED)
+    table.add_column("Check", style="bold", width=30)
+    table.add_column("Result")
+
+    ok = failed = 0
+    for name, result_txt, color in checks:
+        table.add_row(name, f"[{color}]{result_txt}[/{color}]")
+        if color == "green":
+            ok += 1
+        elif color == "red":
+            failed += 1
+
+    console.print(table)
+    summary_color = "green" if failed == 0 else "red"
+    console.print(f"\n[{summary_color} bold]  {ok} passed  |  {failed} failed[/{summary_color} bold]\n")
+
+
+@app.command()
+def optimize(
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project to analyze"),
+    url: Optional[str] = _url_option,
+    key: Optional[str] = _key_option,
+) -> None:
+    """AI-powered workflow optimization suggestions via Ollama."""
+    import asyncio
+    from services.ollama_service import call_ollama
+    from services.structured_logger import log_ai_analysis, read_log
+
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    model = os.getenv("OLLAMA_MODEL", "mistral")
+
+    # Gather recent task history for context
+    recent = read_log("tasks", limit=10)
+    history_lines = "\n".join(
+        f"- {r.get('task','?')} → {r.get('status','?')}" for r in recent
+    ) or "No recent task history."
+
+    cfg_path = Path("config/projects.json")
+    projects_summary = ""
+    if cfg_path.exists():
+        pdata = json.loads(cfg_path.read_text())
+        projects_summary = ", ".join(p.get("name","?") for p in pdata.get("projects",[]))
+
+    prompt = (
+        f"You are analyzing a DevOps automation agent workflow.\n"
+        f"Projects: {projects_summary or 'unknown'}\n"
+        f"Recent task runs:\n{history_lines}\n\n"
+        f"Provide 5 concrete optimization suggestions for this workflow. "
+        f"Focus on reliability, speed, and automation gaps. "
+        f"Format: numbered list with one-line action + one-line reason."
+    )
+
+    console.print(f"[cyan]Analyzing workflow with {model}…[/cyan]\n")
+    with ui.spinner("Thinking…") as prog:
+        prog.start()
+        try:
+            result = asyncio.run(call_ollama(prompt=prompt, model=model, base_url=ollama_url))
+        except Exception as exc:
+            prog.stop()
+            console.print(f"[red]✘ Ollama error: {exc}[/red]")
+            raise typer.Exit(1)
+        prog.stop()
+
+    from rich.panel import Panel
+    console.print(Panel(result or "[dim](no response)[/dim]",
+                        title="[bold cyan]Workflow Optimization Suggestions[/bold cyan]",
+                        border_style="cyan"))
+    try:
+        log_ai_analysis(task="workflow", analysis=result or "", model=model, trigger="optimize",
+                        extra={"project": project})
+    except Exception:
+        pass
+
+
+@app.command()
+def suggest(
+    task_name: Optional[str] = typer.Argument(None, help="Task that failed (uses latest if omitted)"),
+    url: Optional[str] = _url_option,
+) -> None:
+    """Ask AI for fix suggestions for a failed task."""
+    import asyncio
+    from services.ollama_service import call_ollama
+    from services.structured_logger import read_log, log_ai_analysis
+
+    # Find the failure
+    records = read_log("tasks", limit=50)
+    failure = None
+    if task_name:
+        for r in records:
+            if r.get("task") == task_name and r.get("status") == "failed":
+                failure = r
+                break
+    else:
+        for r in records:
+            if r.get("status") == "failed":
+                failure = r
+                break
+
+    if not failure:
+        console.print(f"[yellow]No failure found{f' for task {task_name}' if task_name else ''}.[/yellow]")
+        raise typer.Exit(0)
+
+    failed_task = failure.get("task", "unknown")
+    error_msg = failure.get("message", "No error message recorded")
+    console.print(f"[yellow]Analyzing failure:[/yellow] [bold]{failed_task}[/bold]\n")
+
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    model = os.getenv("OLLAMA_MODEL", "mistral")
+    prompt = (
+        f"A task named '{failed_task}' failed with this error:\n{error_msg}\n\n"
+        "Suggest exactly 3 specific fixes a developer can apply right now. "
+        "Format:\n1. [Fix] — [Why]\n2. ...\n3. ..."
+    )
+
+    with ui.spinner("Consulting AI…") as prog:
+        prog.start()
+        try:
+            result = asyncio.run(call_ollama(prompt=prompt, model=model, base_url=ollama_url))
+        except Exception as exc:
+            prog.stop()
+            console.print(f"[red]✘ Ollama error: {exc}[/red]")
+            raise typer.Exit(1)
+        prog.stop()
+
+    from rich.panel import Panel
+    console.print(Panel(result or "[dim](no response)[/dim]",
+                        title=f"[bold yellow]Fix Suggestions — {failed_task}[/bold yellow]",
+                        border_style="yellow"))
+    try:
+        log_ai_analysis(task=failed_task, analysis=result or "", model=model, trigger="suggest")
+    except Exception:
+        pass
+
+
+@app.command()
+def scan(
+    path: Optional[str] = typer.Option(None, "--path", help="Root path to scan (uses PROJECT_ROOT if omitted)"),
+    raw: bool = _raw_option,
+) -> None:
+    """Auto-discover projects from filesystem by scanning for build markers."""
+    from project_utils import get_project_roots
+
+    cfg_path = Path("config/agent.json")
+    markers = ["package.json", "pyproject.toml", "requirements.txt", "gulpfile.js", "Makefile"]
+    if cfg_path.exists():
+        markers = json.loads(cfg_path.read_text()).get("scan_markers", markers)
+
+    scan_roots = [Path(path)] if path else get_project_roots()
+    results = []
+
+    console.print(f"[cyan]Scanning {len(scan_roots)} root(s) for project markers…[/cyan]\n")
+    for root in scan_roots:
+        if not root.exists():
+            continue
+        try:
+            for entry in root.iterdir():
+                if not entry.is_dir():
+                    continue
+                found_markers = [m for m in markers if (entry / m).exists()]
+                if not found_markers:
+                    continue
+
+                # Detect tasks from package.json scripts
+                tasks: list[str] = []
+                pkg = entry / "package.json"
+                if pkg.exists():
+                    try:
+                        scripts = json.loads(pkg.read_text()).get("scripts", {})
+                        tasks = list(scripts.keys())[:8]
+                    except Exception:
+                        pass
+
+                results.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "markers": found_markers,
+                    "tasks": tasks,
+                })
+        except PermissionError:
+            continue
+
+    if raw:
+        console.print_json(json.dumps(results))
+        return
+
+    ui.print_scan_results(results)
+    console.print(f"[dim]Tip: Add discovered projects to [bold]config/projects.json[/bold][/dim]\n")
+
+
+@app.command()
+def live(
+    refresh: int = typer.Option(5, "--refresh", "-r", help="Refresh interval in seconds"),
+    duration: int = typer.Option(120, "--duration", "-d", help="Total display duration in seconds"),
+    url: Optional[str] = _url_option,
+    key: Optional[str] = _key_option,
+) -> None:
+    """Live terminal dashboard — auto-refreshes queue, status, system health."""
+    client = _client(url or _BASE_URL_DEFAULT, key or _API_KEY_DEFAULT)
+    console.print(f"[cyan]Starting live dashboard (refresh: {refresh}s, duration: {duration}s)[/cyan]")
+    console.print("[dim]Press Ctrl+C to exit[/dim]\n")
+    try:
+        ui.live_dashboard(client=client, refresh_seconds=refresh, duration_seconds=duration)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Dashboard closed.[/dim]")
+
+
+@app.command("config")
+def show_config() -> None:
+    """Show current agent configuration (config/agent.json)."""
+    cfg_path = Path("config/agent.json")
+    if not cfg_path.exists():
+        console.print("[red]✘ config/agent.json not found.[/red]")
+        raise typer.Exit(1)
+    cfg = json.loads(cfg_path.read_text())
+    ui.print_agent_config(cfg)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
