@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {
+      "task": "nightly-build",
+      "time": "02:00",
+      "enabled": false,
+      "description": "Nightly build and test run",
+      "project": "impact",
+      "type": "queue-run"
+    },
+    {
+      "task": "queue-check",
+      "time": "08:00",
+      "enabled": true,
+      "description": "Morning queue processing",
+      "project": null,
+      "type": "queue-run"
+    },
+    {
+      "task": "health-check",
+      "cron": "*/15 * * * *",
+      "enabled": true,
+      "description": "Every 15 minutes health check",
+      "project": null,
+      "type": "health-check"
+    }
+  ]
+}

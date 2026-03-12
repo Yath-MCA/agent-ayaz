@@ -2,8 +2,10 @@ from pathlib import Path
 import os
 import json
 
-PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", "D:/PERSONAL/LIVE_PROJECTS"))
-OFFICIAL_PROJECTS_DIR = {"C:\\_IMPACT\\tomcat\\webapps\\"}
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT", str(Path.home() / "projects")))
+OFFICIAL_PROJECTS_DIR: set[str] = set(
+    p.strip() for p in os.getenv("OFFICIAL_PROJECTS_DIR", "").split(";") if p.strip()
+)
 
 
 ALLOWED_TASK_SUFFIXES = {".ps1", ".bat", ".cmd", ".py", ".sh"}
@@ -21,7 +23,7 @@ def _extra_project_roots_from_env() -> list[Path]:
 
 
 def get_project_roots() -> list[Path]:
-    roots = [PROJECT_ROOT, *_extra_project_roots_from_env(), *(Path(p) for p in OFFICIAL_PROJECTS_DIR)]
+    roots = [PROJECT_ROOT, *_extra_project_roots_from_env(), *(Path(p) for p in OFFICIAL_PROJECTS_DIR if p)]
     deduped: list[Path] = []
     seen: set[str] = set()
     for root in roots:

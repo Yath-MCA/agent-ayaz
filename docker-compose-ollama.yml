@@ -1,0 +1,62 @@
+# docker-compose-ollama.yml
+# Run Ollama as a standalone Docker container
+#
+# Usage:
+#   docker-compose -f docker-compose-ollama.yml up -d
+#   docker-compose -f docker-compose-ollama.yml down
+#
+# After starting, update .env:
+#   OLLAMA_URL=http://localhost:11434
+#
+# Pull a model:
+#   docker exec -it ayazdy-ollama ollama pull mistral
+#
+# GPU support (NVIDIA):
+#   Uncomment the `deploy` section under the ollama service.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ayazdy-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    restart: unless-stopped
+    # ── NVIDIA GPU support (uncomment if you have a GPU) ──────
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # Pull default model after Ollama starts
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ayazdy-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        echo 'Pulling model: ${OLLAMA_MODEL:-mistral}' &&
+        OLLAMA_HOST=http://ollama:11434 ollama pull ${OLLAMA_MODEL:-mistral} &&
+        echo 'Done. Model ready.'
+      "
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    restart: "no"
+
+volumes:
+  ollama_data:
+    driver: local

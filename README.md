@@ -31,6 +31,16 @@ bash run-production.sh
 
 ## 📌 What You Get
 
+✅ **AgentAyazDaddy CLI Layer**
+- `agent` CLI with Rich terminal UI (colorized output, panels, tables)
+- Workflow verification before execution (project, script, Python, API checks)
+- APScheduler cron-like scheduling (`config/schedule.json`)
+- Structured logs — `logs/agent.log`, `tasks.log`, `errors.log`
+- Central project config (`config/projects.json`)
+- Task module definitions (`tasks/*.task.json`)
+- Direct Ollama queries (`agent ask "..."`)
+- Dashboard status posting (`agent dashboard <task> <status>`)
+
 ✅ **Task Queue System**
 - File-based queue management (queue/ → completed/)
 - Multi-project support with project selector
@@ -78,6 +88,51 @@ Production services use 9xxx ports by default (e.g., API `9234`, Dashboard `9890
 
 ---
 
+## 🤖 AgentAyazDaddy — Workflow Refactor & CLI Task Runner
+
+A dedicated CLI layer built on top of the ecosystem, providing structured task execution, workflow verification, cron scheduling, and Rich terminal UI.
+
+### Quick start
+
+```bash
+# New agent CLI (Rich UI, typer-based)
+agent status
+agent run <task> --project my-project
+agent run <task> --verify              # with pre-flight checks
+agent queue
+agent queue --run
+agent projects --local
+agent schedule
+agent logs tasks
+agent analyze "summarize last failure"
+agent ask "how do I optimize a Python loop?"
+agent verify <task> --project impact
+agent dashboard compare-html running
+```
+
+### Key files
+
+| Path | Purpose |
+|------|---------|
+| `agent.bat` | Windows entry point |
+| `cli/agent_cli.py` | Typer+Rich CLI (10 commands) |
+| `cli/terminal_ui.py` | Rich panels, tables, banners |
+| `agents/workflow_verifier.py` | Pre-run checks (project, script, Python, API) |
+| `services/scheduler_service.py` | APScheduler integration |
+| `services/structured_logger.py` | `logs/agent.log`, `tasks.log`, `errors.log` |
+| `config/projects.json` | Central project config |
+| `config/schedule.json` | Cron-like schedule config |
+| `tasks/*.task.json` | Structured task module definitions |
+
+### New API endpoint
+
+```
+POST /api/agent/task-status   — receive task status updates from agents
+GET  /api/agent/task-status   — retrieve recent status history
+```
+
+---
+
 ## 🖥 Desktop CLI (Inspired by Copilot-Ralph)
 
 Launch the local desktop assistant window from CLI:
@@ -86,7 +141,7 @@ Launch the local desktop assistant window from CLI:
 ayazdy desktop
 ```
 
-This opens the built-in desktop Git assistant (`tools/ayazgitdy_gui.py`) and keeps API/queue logic in the same project.
+This opens the built-in desktop Git assistant (archived to `temp/standalone-tools/ayazgitdy_gui.py`) and keeps API/queue logic in the same project.
 
 ---
 
@@ -97,6 +152,7 @@ This opens the built-in desktop Git assistant (`tools/ayazgitdy_gui.py`) and kee
 | **Web Dashboard** | http://localhost:9890 | Project selector, task management, real-time status |
 | **REST API** | http://localhost:9234 | Programmatic task queue management |
 | **API Docs** | http://localhost:9234/docs | Interactive Swagger documentation |
+| **Agent Task Status** | http://localhost:9234/api/agent/task-status | AgentAyazDaddy status feed |
 | **Grafana** | http://localhost:9543 | Monitoring dashboards (user: admin, pwd: AyazDy2024!) |
 | **Prometheus** | http://localhost:9654 | Raw metrics and queries |
 
@@ -125,19 +181,59 @@ This opens the built-in desktop Git assistant (`tools/ayazgitdy_gui.py`) and kee
 ## 🧠 Architecture
 
 ```text
-ai-agent/
-├── main.py                      # Composition root (FastAPI app + startup)
+agent-ayaz/
+├── main.py                          # FastAPI app + agent pipeline composition
+├── agent.bat                        # AgentAyazDaddy CLI entry point (new)
 ├── config/
-│   └── settings.py              # Environment/config loading
+│   ├── settings.py                  # Environment/config loading
+│   ├── projects.json                # Central project config (new)
+│   └── schedule.json                # Cron-like schedule config (new)
+├── tasks/                           # Task module definitions (new)
+│   ├── build.task.json
+│   ├── deploy.task.json
+│   └── htmlCompare.task.json
 ├── security/
-│   └── command_filter.py        # Command policy/validation
+│   └── command_filter.py            # Command policy/validation
+├── agents/                          # Multi-agent system
+│   ├── planner.py                   # LLM → ExecutionPlan JSON
+│   ├── validator.py                 # Policy gate
+│   ├── executor.py                  # Validated execution
+│   ├── risk.py                      # Risk scoring (1-10)
+│   ├── approval.py                  # Token-based approval
+│   ├── auditor.py                   # Immutable JSONL audit
+│   ├── workflow_verifier.py         # Pre-run checks (new)
+│   └── nodes.py                     # Distributed registry
 ├── services/
-│   ├── ollama_service.py        # Ollama HTTP integration
-│   ├── telegram_service.py      # Telegram bot integration
-│   └── execution_service.py     # Command execution wrapper
-├── project_utils.py             # PROJECT_ROOT project path utilities
+│   ├── llm_provider.py              # Multi-provider LLM + auto-fallback
+│   ├── ollama_service.py            # Ollama HTTP integration
+│   ├── telegram_service.py          # Telegram bot (15+ commands)
+│   ├── execution_service.py         # Command execution wrapper
+│   ├── memory_service.py            # SQLite execution history
+│   ├── task_queue_service.py        # File-based task queue lifecycle
+│   ├── scheduler_service.py         # APScheduler cron integration (new)
+│   └── structured_logger.py         # agent/tasks/errors log (new)
+├── cli/
+│   ├── agent_cli.py                 # AgentAyazDaddy CLI — typer+rich (new)
+│   ├── terminal_ui.py               # Rich UI components (new)
+│   ├── cli.py                       # Legacy ayazdy argparse CLI
+│   ├── commands.py                  # Command handlers
+│   └── client.py                    # HTTP client
+├── plugins/
+│   ├── __init__.py                  # PluginManager (4 lifecycle hooks)
+│   └── logger_plugin.py             # Example plugin
+├── logs/                            # Log output
+│   ├── agent.log                    # Agent lifecycle (new)
+│   ├── tasks.log                    # Task events (new)
+│   ├── errors.log                   # Error events (new)
+│   ├── audit.log                    # Immutable JSONL audit
+│   └── memory.db                    # SQLite execution history
+├── agent-task/
+│   ├── queue/                       # Tasks to run (sorted alpha)
+│   ├── completed/                   # Finished tasks
+│   └── later/                       # Deferred tasks
+├── project_utils.py                 # Project discovery
 ├── requirements.txt
-├── .env.example                 # Safe env template
+├── .env.example
 └── README.md
 ```
 
@@ -555,7 +651,7 @@ Expected result:
 
 ## 🧪 Reference Client
 
-- Python reference client is available at `tools/api_client.py`
+- Python reference client is available at `cli/client.py`
 - Uses structured error handling and retry logic for transport/429 scenarios
 
 ## 🧭 Client Handling Guide
@@ -623,8 +719,10 @@ cloudflared tunnel --url http://localhost:9234
 ### Testing
 - [ ] Run `ayazdy health` — all checks pass
 - [ ] Run `ayazdy self-check` — Ollama, DB, approval store, DSL validated
+- [ ] Run `agent status` — system status with Rich UI
+- [ ] Run `agent verify <task> --project <name>` — workflow pre-run checks pass
 - [ ] Test approval workflow: reject high-risk task, approve low-risk
-- [ ] Verify queue processing: place test `.yaml` in `agent-task/queue/`, run `ayazdy qrun`
+- [ ] Verify queue processing: place test `.yaml` in `agent-task/queue/`, run `agent queue --run`
 
 ---
 
@@ -759,7 +857,7 @@ The `/project/run-custom` endpoint was previously defined as a function but neve
 - **Dashboard Guide:** `dashboard/README.md`
 - **Task Queue Specs:** `agent-task/completed/01-07` (phase implementation specs)
 - **Plugin Development:** See `plugins/logger_plugin.py` for example
-- **API Client Reference:** `tools/api_client.py`
+- **API Client Reference:** `cli/client.py`
 
 ---
 

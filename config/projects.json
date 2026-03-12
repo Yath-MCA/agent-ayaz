@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "name": "impact",
+      "path": "C:/_IMPACT/tomcat/webapps/impact_vite",
+      "tasks": ["build", "deploy", "compare-html"],
+      "description": "Impact Vite frontend project"
+    },
+    {
+      "name": "impactweb",
+      "path": "C:/_IMPACT/tomcat/webapps/impactweb_live",
+      "tasks": ["build", "deploy"],
+      "description": "Impact Web live project"
+    },
+    {
+      "name": "agent-ayaz",
+      "path": "D:/agent-ayaz",
+      "tasks": ["self-check", "run-queue"],
+      "description": "AgentAyazDaddy automation ecosystem"
+    }
+  ]
+}

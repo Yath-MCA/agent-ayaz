@@ -1,5 +1,48 @@
 services:
   # ============================================
+  # OLLAMA: Local LLM Server
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ayazdy-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    restart: always
+    networks:
+      - ayazdy-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+        labels: "service=ollama,env=production"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Pull model on startup ──────────────────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ayazdy-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "OLLAMA_HOST=http://ollama:11434 ollama pull ${OLLAMA_MODEL:-mistral} && echo 'Model pulled successfully'"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    networks:
+      - ayazdy-network
+    restart: "no"
+
+  # ============================================
   # CORE: Queue Processor (Production)
   # ============================================
   queue-processor:
@@ -17,7 +60,8 @@ services:
       - LOG_LEVEL=INFO
       - TZ=UTC
       # AI Agents Validation
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -36,6 +80,7 @@ services:
       - ayazdy-network
     depends_on:
       - queue-api
+      - ollama
     logging:
       driver: "json-file"
       options:
@@ -69,7 +114,8 @@ services:
       - API_HOST=0.0.0.0
       - TZ=UTC
       # AI Agents
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -86,6 +132,9 @@ services:
     restart: always
     networks:
       - ayazdy-network
+    depends_on:
+      ollama:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9234/health"]
       interval: 30s
@@ -247,6 +296,8 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  ollama_data:
     driver: local
   # postgres_data:
   #   driver: local

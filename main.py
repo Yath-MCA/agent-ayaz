@@ -1151,6 +1151,61 @@ async def api_promote_later(request: Request, x_api_key: str = Header(None)):
 
 
 # ─────────────────────────────────────────────
+# AgentAyazDaddy — Task Status Endpoint
+# ─────────────────────────────────────────────
+
+_agent_task_statuses: list = []  # In-memory store; keyed by (agent, task)
+
+
+@app.post("/api/agent/task-status")
+async def agent_task_status(request: Request, x_api_key: str = Header(None)):
+    """Receive and store agent task status updates.
+
+    Body: { "agent": "AgentAyazDaddy", "task": "compare-html", "status": "running" }
+    Accepted statuses: queued | running | completed | failed
+    """
+    require_protected_access(request, x_api_key, "/api/agent/task-status")
+    body = await request.json()
+    agent_name = body.get("agent", "unknown")
+    task_name = body.get("task", "unknown")
+    task_status = body.get("status", "unknown")
+    valid_statuses = {"queued", "running", "completed", "failed"}
+    if task_status not in valid_statuses:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=f"status must be one of {sorted(valid_statuses)}")
+
+    import time as _time
+    entry = {
+        "agent": agent_name,
+        "task": task_name,
+        "status": task_status,
+        "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+    }
+    _agent_task_statuses.append(entry)
+    # Keep last 500 entries
+    if len(_agent_task_statuses) > 500:
+        _agent_task_statuses.pop(0)
+
+    audit_log({"kind": "agent-task-status", "agent": agent_name, "task": task_name, "status": task_status})
+    return {"ok": True, "recorded": entry}
+
+
+@app.get("/api/agent/task-status")
+async def get_agent_task_statuses(
+    request: Request,
+    x_api_key: str = Header(None),
+    agent: str | None = None,
+    limit: int = 50,
+):
+    """Retrieve recent agent task status entries."""
+    require_protected_access(request, x_api_key, "/api/agent/task-status")
+    entries = _agent_task_statuses[-limit:]
+    if agent:
+        entries = [e for e in entries if e.get("agent") == agent]
+    return {"entries": list(reversed(entries)), "total": len(entries)}
+
+
+# ─────────────────────────────────────────────
 # Phase 7–14 Endpoints
 # ─────────────────────────────────────────────
 @app.get("/monitor/mode")

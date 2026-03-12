@@ -1,0 +1,12 @@
+{
+  "task": "build",
+  "name": "Build Project",
+  "project": "impact",
+  "description": "Build the project using npm run build or equivalent",
+  "type": "shell",
+  "command": "npm run build",
+  "timeout": 300,
+  "retry_count": 1,
+  "retry_delay": 10,
+  "auto_approve": true
+}

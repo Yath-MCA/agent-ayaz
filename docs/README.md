@@ -10,6 +10,7 @@ Full multi-agent system with planning, validation, execution auditing, approval 
 
 **Agent Ayazdy** is a sophisticated AI DevOps agent that provides:
 
+- 🤖 **AgentAyazDaddy CLI** — `agent` command with Rich UI, workflow verification, APScheduler, structured logs
 - 🧠 **Multi-agent architecture** — Planner → Validator → Executor → Auditor pipeline
 - 🔐 **Token-based approval workflow** — Review plans before execution
 - 📊 **SQLite memory layer** — Execution history, stats, retry suggestions
@@ -47,6 +48,7 @@ agent-ayazdy/
 │   ├── replay.py                # Replay execution by ID
 │   ├── optimizer.py             # Memory-driven prompt augmentation
 │   ├── mode.py                  # SAFE/CONTROLLED/AUTONOMOUS modes
+│   ├── workflow_verifier.py     # Pre-run checks (new — AgentAyazDaddy)
 │   └── nodes.py                 # Distributed node registry
 ├── services/
 │   ├── llm_provider.py          # 🤖 Multi-provider LLM with auto-fallback
@@ -54,32 +56,125 @@ agent-ayazdy/
 │   ├── telegram_service.py      # Telegram bot (15+ commands)
 │   ├── execution_service.py     # Command execution wrapper
 │   ├── memory_service.py        # SQLite execution history (logs/memory.db)
-│   └── task_queue_service.py    # File-based task queue lifecycle
+│   ├── task_queue_service.py    # File-based task queue lifecycle
+│   ├── scheduler_service.py     # APScheduler cron integration (new)
+│   └── structured_logger.py     # Structured log writer (new)
 ├── plugins/                     # 🔌 Plugin system
 │   ├── __init__.py              # PluginManager with 4 lifecycle hooks
 │   └── logger_plugin.py         # Example plugin
-├── cli/                         # 🛠️ CLI control interface
-│   ├── cli.py                   # Argparse entrypoint
+├── cli/                         # 🛠️ CLI control interfaces
+│   ├── agent_cli.py             # AgentAyazDaddy CLI — typer + rich (new)
+│   ├── terminal_ui.py           # Rich UI components (new)
+│   ├── cli.py                   # Legacy ayazdy argparse entrypoint
 │   ├── client.py                # REST API wrapper
 │   └── commands.py              # Command implementations
+├── config/
+│   ├── settings.py              # Environment/config loading
+│   ├── projects.json            # Central project config (new)
+│   └── schedule.json            # Cron-like schedule config (new)
+├── tasks/                       # 📋 Task module definitions (new)
+│   ├── build.task.json
+│   ├── deploy.task.json
+│   └── htmlCompare.task.json
 ├── dashboard/                   # 🖥️ React Control Center
 │   ├── index.html               # CDN-based React app (zero build)
 │   ├── js/app.js                # Dashboard UI (~350 lines)
 │   └── README.md                # Dashboard setup guide
-├── tools/                       # 🔧 Utility tools
-│   ├── git_service.py           # Git automation service
-│   ├── ayazgitdy.py             # Standalone Git commit CLI
-│   ├── ayazgitdy_gui.py         # Tkinter GUI for Git automation
-│   └── check_llm.py             # LLM provider diagnostic tool
+├── tools/                       # 🔧 Utility tools (active)
+│   └── git_service.py           # Git automation service (used by main.py)
+├── temp/                        # 📦 Archive (non-runtime)
+│   ├── bat/                     # Archived batch scripts
+│   ├── build-specs/             # PyInstaller .spec files
+│   ├── legacy/                  # Orphaned modules (dashboard_server, ide_runner, task_queue_system)
+│   └── standalone-tools/        # Standalone CLIs/GUIs (ayazgitdy, check_llm, control_center)
 ├── agent-task/                  # 📋 Task queue folders
 │   ├── queue/                   # Tasks to process
-│   ├── completed/               # Completed tasks (01-08 phase specs)
-│   └── later/                   # Future tasks
-├── project_utils.py             # PROJECT_ROOT utilities
-├── ayazdy.bat                   # Windows OS-level wrapper
-├── check_llm.bat                # LLM diagnostic wrapper
+│   ├── completed/               # Completed tasks
+│   └── later/                   # Deferred tasks
+├── logs/                        # Log output
+│   ├── agent.log                # Agent lifecycle events (new)
+│   ├── tasks.log                # Task start/complete/failed (new)
+│   ├── errors.log               # Error events (new)
+│   ├── audit.log                # Immutable JSONL audit trail
+│   └── memory.db                # SQLite execution history
+├── project_utils.py             # PROJECT_ROOT utilities (env-var-based, no hardcoded paths)
+├── agent.bat                    # AgentAyazDaddy CLI wrapper (new)
+├── ayazdy.bat                   # Legacy CLI wrapper
 ├── requirements.txt             # Python dependencies
 └── README.md
+```
+
+---
+
+## 🤖 AgentAyazDaddy — CLI Task Runner
+
+The new primary CLI interface with Rich terminal UI.
+
+### Commands
+
+```bash
+agent status                            # Full system status
+agent run <task> [--project P]          # Run a task
+agent run <task> --verify               # With pre-flight checks
+agent run <task> --dry-run              # Simulate without executing
+agent queue                             # Queue status
+agent queue --run                       # Execute queue now
+agent queue --promote                   # Promote later/ → queue/
+agent projects                          # Projects from API
+agent projects --local                  # Projects from config/projects.json
+agent schedule                          # Scheduler status
+agent logs tasks                        # Task logs
+agent logs errors                       # Error logs
+agent analyze "summarize failures"      # AI analysis via LLM
+agent ask "explain this error"          # Direct Ollama query
+agent verify <task> --project impact    # Workflow pre-run checks
+agent dashboard <task> <status>         # Post status to dashboard
+```
+
+### Scheduler (APScheduler)
+
+Edit `config/schedule.json` to define cron jobs:
+
+```json
+{
+  "tasks": [
+    { "task": "nightly-build", "time": "02:00",          "enabled": false, "type": "queue-run" },
+    { "task": "queue-check",   "time": "08:00",          "enabled": true,  "type": "queue-run" },
+    { "task": "health-check",  "cron": "*/15 * * * *",   "enabled": true,  "type": "health-check" }
+  ]
+}
+```
+
+Start scheduler:
+
+```bash
+python -m services.scheduler_service
+# or
+agent schedule --start
+```
+
+### Project config
+
+Edit `config/projects.json`:
+
+```json
+{
+  "projects": [
+    {
+      "name": "impact",
+      "path": "C:/_IMPACT/tomcat/webapps/impact_vite",
+      "tasks": ["build", "deploy", "compare-html"]
+    }
+  ]
+}
+```
+
+### Structured logs
+
+```bash
+agent logs tasks --limit 20   # logs/tasks.log
+agent logs errors             # logs/errors.log
+agent logs agent              # logs/agent.log
 ```
 
 ---
@@ -284,8 +379,10 @@ Start the server and open **http://localhost:8000/dashboard/**
 - `GET /queue/status` - queue/completed/later folder status
 - `POST /queue/run` - process queue tasks in order
 - `POST /queue/promote-later` - move tasks from later/ to queue/
+- `POST /api/agent/task-status` - receive agent task status updates (`agent`, `task`, `status` fields)
+- `GET /api/agent/task-status` - retrieve recent agent task status history
 
-## 🤖 Telegram Commands
+
 
 **Core:**
 - `/start`, `/help` - welcome + command list
@@ -690,7 +787,7 @@ SQLite database at `logs/memory.db` tracks:
 
 ## 🧪 Reference Client & Examples
 
-Python reference client is available at `tools/api_client.py`.
+Python reference client is available at `cli/client.py`.
 
 ### WebSocket Real-time Chat
 
@@ -921,7 +1018,7 @@ cloudflared tunnel --url http://localhost:8000
 - **Dashboard Guide:** `dashboard/README.md`
 - **Task Queue Specs:** `agent-task/completed/01-07` (phase implementation specs)
 - **Plugin Development:** See `plugins/logger_plugin.py` for example
-- **API Client Reference:** `tools/api_client.py`
+- **API Client Reference:** `cli/client.py`
 
 ---
 
